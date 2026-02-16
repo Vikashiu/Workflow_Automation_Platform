@@ -41,12 +41,52 @@ async function main() {
   });
 
   await prisma.availableAction.upsert({
-    where: { id: "Google Calendar" },
+    where: { id: "Google_Calendar" },
     update: {},
     create: {
       id: "Google_Calendar",
       name: "Google Calender",
       image: "https://upload.wikimedia.org/wikipedia/commons/a/a5/Google_Calendar_icon_%282020%29.svg"
+    }
+  });
+
+  await prisma.availableAction.upsert({
+    where: { id: "Notion" },
+    update: {},
+    create: {
+      id: "Notion",
+      name: "Notion",
+      image: "https://upload.wikimedia.org/wikipedia/commons/4/45/Notion_app_logo.png"
+    }
+  });
+
+  await prisma.availableAction.upsert({
+    where: { id: "Gemini" },
+    update: {},
+    create: {
+      id: "Gemini",
+      name: "Gemini",
+      image: "https://upload.wikimedia.org/wikipedia/commons/8/8a/Google_Gemini_logo.svg"
+    }
+  });
+
+  await prisma.availableAction.upsert({
+    where: { id: "Slack" },
+    update: {},
+    create: {
+      id: "Slack",
+      name: "Slack",
+      image: "https://upload.wikimedia.org/wikipedia/commons/d/d5/Slack_icon_2019.svg"
+    }
+  });
+
+  await prisma.availableAction.upsert({
+    where: { id: "Discord" },
+    update: {},
+    create: {
+      id: "Discord",
+      name: "Discord",
+      image: "https://assets-global.website-files.com/6257adef93867e56f84d3092/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png"
     }
   });
 }

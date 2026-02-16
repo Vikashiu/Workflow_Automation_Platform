@@ -46,16 +46,26 @@ app.use(express_1.default.json()); // Middleware to parse JSON body
 var client = new client_1.PrismaClient();
 console.log("hi there");
 app.post("/hooks/catch/:userId/:zapId", function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
-    var userId, zapId, body;
+    var userId, zapId, body, zap;
     return __generator(this, function (_a) {
         switch (_a.label) {
             case 0:
                 userId = req.params.userId;
                 zapId = req.params.zapId;
                 body = req.body;
-                console.log(body);
-                // either both step happen or nothing happen --> that remind of transactions
-                // store in db a new trigger
+                return [4 /*yield*/, client.zap.findFirst({
+                        where: {
+                            id: zapId,
+                            userId: parseInt(userId)
+                        }
+                    })];
+            case 1:
+                zap = _a.sent();
+                if (!zap) {
+                    res.status(404).json({ message: "Zap not found or unauthorized" });
+                    return [2 /*return*/];
+                }
+                // Store in db a new run
                 return [4 /*yield*/, client.$transaction(function (tx) { return __awaiter(void 0, void 0, void 0, function () {
                         var run;
                         return __generator(this, function (_a) {
@@ -63,12 +73,13 @@ app.post("/hooks/catch/:userId/:zapId", function (req, res) { return __awaiter(v
                                 case 0: return [4 /*yield*/, tx.zapRun.create({
                                         data: {
                                             zapId: zapId,
-                                            metadata: body
+                                            metadata: {
+                                                trigger: body
+                                            }
                                         }
                                     })];
                                 case 1:
                                     run = _a.sent();
-                                    console.log(run.metadata);
                                     return [4 /*yield*/, tx.zapRunOutbox.create({
                                             data: {
                                                 zapRunId: run.id
@@ -80,13 +91,11 @@ app.post("/hooks/catch/:userId/:zapId", function (req, res) { return __awaiter(v
                             }
                         });
                     }); })];
-            case 1:
-                // either both step happen or nothing happen --> that remind of transactions
-                // store in db a new trigger
+            case 2:
+                // Store in db a new run
                 _a.sent();
-                console.log("hi there");
                 res.json({
-                    message: "worked"
+                    message: "Webhook received"
                 });
                 return [2 /*return*/];
         }

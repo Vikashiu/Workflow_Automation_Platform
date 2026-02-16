@@ -6,52 +6,54 @@ import { OrrButton } from "../buttons/OrrButton"
 import { useRouter } from "next/navigation";
 
 
-export function Navbar(){
-    
+export function Navbar() {
+
     const router = useRouter();
-    function onClickHandler(){
+    function onClickHandler() {
         router.push('/signup')
     }
-    return <>
-        <div className="flex h-1/10 border-b border-b-gray-200 justify-between items-center px-4 md:px-10 bg-[#fcfaf7]" >
+    return (
+        <nav className="sticky top-0 z-50 w-full border-b border-gray-200 bg-white/80 backdrop-blur-md supports-[backdrop-filter]:bg-white/60">
+            <div className="flex h-16 items-center justify-between px-4 md:px-8 max-w-7xl mx-auto w-full">
 
-            <div className="flex items-center">
-                {/* Logo remains visible on all screen sizes */}
-                <Image 
-                    src="/images/zapier_logo.png"
-                    alt="logo"
-                    width={100}                    
-                    height={40}
-                    className="flex-shrink-0" // Prevents logo from shrinking
-                ></Image>
-                
-                {/* This container and its links will be hidden on screens smaller than 'md' */}
-                <div className="hidden lg:flex items-center ml-4">
-                    <LinkButton text="Products"></LinkButton>
-                    <LinkButton text="Solutions"></LinkButton>
-                    <LinkButton text="Resources"></LinkButton>
-                    <LinkButton text="Enterprice"></LinkButton>
-                    <LinkButton text="Pricing"></LinkButton>
+                <div className="flex items-center gap-6">
+                    {/* Logo remains visible on all screen sizes */}
+                    <div className="flex-shrink-0 cursor-pointer" onClick={() => router.push('/')}>
+                        <Image
+                            src="/images/zapier_logo.png"
+                            alt="logo"
+                            width={100}
+                            height={28}
+                            className="object-contain"
+                        />
+                    </div>
+
+                    {/* This container and its links will be hidden on screens smaller than 'md' */}
+                    <div className="hidden lg:flex items-center gap-1">
+                        <LinkButton text="Products"></LinkButton>
+                        <LinkButton text="Solutions"></LinkButton>
+                        <LinkButton text="Resources"></LinkButton>
+                        <LinkButton text="Enterprise"></LinkButton>
+                        <LinkButton text="Pricing"></LinkButton>
+                    </div>
                 </div>
+
+                <div className="flex gap-3 justify-center items-center">
+
+                    {/* This container and its links will also be hidden on screens smaller than 'md' */}
+                    <div className="hidden md:flex gap-1 items-center mr-2">
+                        <LinkButton text="Contact sales"></LinkButton>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <div className="hidden sm:block">
+                            <LinkButton text="Log in" onClickHandler={() => { router.push('/signin') }}></LinkButton>
+                        </div>
+                        <OrrButton text="Sign up" onClickhandler={onClickHandler}></OrrButton>
+                    </div>
+                </div>
+
             </div>
-
-            <div className="flex gap-2 justify-center items-center">
-                
-                {/* This container and its links will also be hidden on screens smaller than 'md' */}
-                <div className="hidden md:flex gap-2 items-center">
-                    <LinkButton text="explore apps"></LinkButton>
-                    <LinkButton text="Contact sales"></LinkButton>
-                </div>
-
-                {/* These buttons remain visible on all screen sizes */}
-                <div className="flex-shrink-0"> {/* Wrapper to prevent shrinking */}
-                  <LinkButton text="Log in" onClickHandler={() => {router.push('/signin')}}></LinkButton>
-                </div>
-                <div className="flex-shrink-0"> {/* Wrapper to prevent shrinking */}
-                  <OrrButton text = "Sign up" onClickhandler={onClickHandler}></OrrButton>
-                </div>
-            </div>
-
-        </div>
-    </>
+        </nav>
+    )
 }

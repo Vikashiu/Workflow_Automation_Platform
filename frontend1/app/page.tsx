@@ -3,57 +3,34 @@ import { Navbar } from "@/component/Navbars/Navbar";
 import { HeroLanding } from "@/component/heroSections/HeroSection";
 import { HeroVideo } from "@/component/heroSections/HeroVideo";
 import { Footer } from "@/component/footer"
+
 export default function Home() {
   return (
-    <div className="h-screen bg-[#fffefa]">
+    <div className="min-h-screen bg-background text-foreground bg-grid-pattern relative flex flex-col font-sans">
+      {/* Subtle fade overlay for grid */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-background/90 via-background/50 to-background"></div>
 
-      <Navbar></Navbar>
-      <div className="mx-4 md:mx-10 lg:mx-20 xl:mx-32 border-x border-gray-200 ">
-        <HeroLanding></HeroLanding>
-        <div className="flex justify-center items-center pt-10">
-          
-          YOUR COMPLETE TOOLKIT FOR AI AUTOMATION</div>
+      <div className="relative z-10 flex flex-col min-h-screen">
+        <Navbar />
 
-        <HeroVideo></HeroVideo>
+        <main className="flex-grow w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 border-x border-border/40 bg-background/50 backdrop-blur-sm">
+          <div className="py-12 md:py-20 lg:py-24">
+            <HeroLanding />
+
+            <div className="flex flex-col items-center justify-center py-16 space-y-4 animate-fade-in" style={{ animationDelay: '0.2s' }}>
+              <div className="h-px w-full max-w-sm bg-gradient-to-r from-transparent via-border to-transparent"></div>
+              <span className="text-sm font-semibold tracking-[0.2em] text-muted-foreground uppercase text-center bg-muted/50 px-4 py-1 rounded-full">
+                Your Complete Toolkit for AI Automation
+              </span>
+              <div className="h-px w-full max-w-sm bg-gradient-to-r from-transparent via-border to-transparent"></div>
+            </div>
+
+            <HeroVideo />
+          </div>
+        </main>
+
+        <Footer />
       </div>
-      <Footer/>
-
     </div>
   );
 }
-// import Image from "next/image";
-// // Assuming the correct component and path is ResponsiveNavbar.tsx, adjust if needed.
-// import { Navbar } from "@/component/Navbars/Navbar"; 
-// import { HeroLanding } from "@/component/heroSections/HeroSection";
-// import { HeroVideo } from "@/component/heroSections/HeroVideo";
-// // Assuming the correct component file is Footer.tsx
-// import { Footer } from "@/component/footer"; 
-
-// export default function Home() {
-//   return (
-//     // Using min-h-screen ensures the layout takes at least the full screen height
-//     // and can grow if content overflows, which is better for responsiveness.
-//     <div className="min-h-screen bg-[#fffefa] flex flex-col">
-//       <Navbar />
-      
-//       {/* Main content area now has responsive horizontal margins */}
-//       <main className="flex-grow">
-//         {/* Responsive Margins Applied Here:
-//           - Mobile (default): mx-4 (1rem horizontal margin)
-//           - Tablet (md): mx-10 (2.5rem horizontal margin)
-//           - Laptop (lg): mx-20 (5rem horizontal margin)
-//           - Desktop (xl): mx-32 (8rem horizontal margin)
-//         */}
-//         <div className="mx-4 md:mx-10 lg:mx-20 xl:mx-32 border-x border-gray-200">
-//           <HeroLanding />
-//           <div className="flex justify-center items-center pt-10 text-center px-4 font-semibold text-gray-600 tracking-wider">
-//             YOUR COMPLETE TOOLKIT FOR AI AUTOMATION
-//           </div>
-//           <HeroVideo />
-//         </div>
-//       </main>
-
-//       <Footer />
-//     </div>
-//   );
-// }

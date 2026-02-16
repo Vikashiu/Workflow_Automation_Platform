@@ -25,6 +25,7 @@ zapRouter.post('/create', authMiddleware, async (req, res) => {
             data: {
                 TriggerId: "",
                 userId: parseInt(id),
+                name: parsedData.data.name,
                 actions: {
 
                     create: parsedData.data.actions.map((x, index) => ({
@@ -89,30 +90,30 @@ zapRouter.get('/allzap', authMiddleware, async (req, res) => {
     console.log(zaps)
 })
 zapRouter.get('/user', authMiddleware, async (req, res) => {
-  try {
-    //@ts-ignore
-    const id = req.id; // assuming authMiddleware sets req.user
-    const zaps = await prismaClient.zap.findMany({
-        where:{ userId: id },
-        include: {
-            actions: {
-                include: {
-                    type: true
-                }
-            }, trigger: {
-                include: {
-                    type: true
+    try {
+        //@ts-ignore
+        const id = req.id; // assuming authMiddleware sets req.user
+        const zaps = await prismaClient.zap.findMany({
+            where: { userId: id },
+            include: {
+                actions: {
+                    include: {
+                        type: true
+                    }
+                }, trigger: {
+                    include: {
+                        type: true
+                    }
                 }
             }
-        }
-    }); // newest first
-    res.json({
-        zaps
-    })
-  } catch (err) {
-    console.log('Error fetching user zaps:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+        }); // newest first
+        res.json({
+            zaps
+        })
+    } catch (err) {
+        console.log('Error fetching user zaps:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
 });
 zapRouter.get('/:zapId', authMiddleware, async (req, res) => {
 
@@ -142,5 +143,56 @@ zapRouter.get('/:zapId', authMiddleware, async (req, res) => {
         zap
     })
 })
+
+zapRouter.get('/:zapId/runs/latest', authMiddleware, async (req, res) => {
+    //@ts-ignore
+    const id = req.id;
+    const zapId = req.params.zapId;
+
+    // Validate ownership
+    const zap = await prismaClient.zap.findFirst({
+        where: { id: zapId, userId: parseInt(id) }
+    });
+
+    if (!zap) {
+        res.status(404).json({ message: "Zap not found" });
+        return;
+    }
+
+    const run = await prismaClient.zapRun.findFirst({
+        where: { zapId: zapId },
+        orderBy: { createdAt: 'desc' }
+    });
+
+    res.json({ run });
+});
+
+zapRouter.patch('/:zapId', authMiddleware, async (req, res) => {
+    //@ts-ignore
+    const id = req.id;
+    const zapId = req.params.zapId;
+    const body = req.body;
+
+    // Validate ownership
+    const zap = await prismaClient.zap.findFirst({
+        where: { id: zapId, userId: parseInt(id) }
+    });
+
+    if (!zap) {
+        res.status(404).json({ message: "Zap not found" });
+        return;
+    }
+
+    if (body.name) {
+        await prismaClient.zap.update({
+            where: { id: zapId },
+            data: { name: body.name }
+        });
+    }
+
+    res.json({ message: "Updated" });
+});
+
+
 
 export default zapRouter;

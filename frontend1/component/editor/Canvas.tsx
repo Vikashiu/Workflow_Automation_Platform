@@ -1,16 +1,27 @@
 "use client";
-import { Button, Modal, ModalBody, ModalFooter, ModalHeader } from "flowbite-react";
+import { Modal } from "flowbite-react";
 import { PrimaryButton } from "../buttons/PrimaryButton";
 import { BACKEND_URL } from "@/app/config";
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import canvasNavbar from "./canvasNavbar";
-import { useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import { TopBar } from "./Topbar";
 import type { Trigger, Action, TriggerResponse, ActionResponse } from "@/type/editorsType";
+import { EmailSelector } from "./config-selectors/EmailSelector";
+import { SolanaSelector } from "./config-selectors/SolanaSelector";
+import { GoogleCalendarSelector } from "./config-selectors/GoogleCalendarSelector";
+import { GoogleSheetSelector } from "./config-selectors/GoogleSheetSelector";
+import { NotionSelector } from "./config-selectors/NotionSelector";
+import { GeminiSelector } from "./config-selectors/GeminiSelector";
+import ZapNode from "./ZapNode";
+import AddButtonEdge from "./AddButtonEdge";
+import { ConfigurationSidebar } from "./ConfigurationSidebar";
+
 import {
   ReactFlow,
   addEdge,
   Background,
+  BackgroundVariant,
   Controls,
   Edge,
 
@@ -29,18 +40,28 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import { useReactFlow } from "@xyflow/react";
-import axios from "axios";
+import { api } from "@/lib/api-client";
+import { useToast } from "@/contexts/ToastContext";
+import { API_ROUTES } from "@/lib/constants";
 import Topbar from "../dashboard/Topbar";
 
 
 const nodeOrigin: [number, number] = [0.5, 0];
 
+const nodeTypes = {
+  zapNode: ZapNode,
+};
+
+const edgeTypes = {
+  addButton: AddButtonEdge,
+};
+
 
 const initialNodes: Node[] = [
   {
     id: "1",
-    type: "input",
-    data: { label: "1. Trigger Node", metadata: {} },
+    type: "zapNode",
+    data: { label: "Trigger", isTrigger: true, subtitle: "1. Start" },
     position: { x: 250, y: 50 },
     deletable: false,
   },
@@ -57,13 +78,13 @@ function useAvailableActionsAndTriggers() {
   const [availableTriggers, setAvailableTriggers] = useState<Trigger[]>([]);
 
   useEffect(() => {
-    axios
-      .get<TriggerResponse>(`${BACKEND_URL}/api/v1/trigger/available`)
-      .then((x) => setAvailableTriggers(x.data.availableTriggers));
+    api
+      .get<TriggerResponse>(API_ROUTES.TRIGGER.AVAILABLE)
+      .then((x) => setAvailableTriggers(x.availableTriggers));
 
-    axios
-      .get<ActionResponse>(`${BACKEND_URL}/api/v1/action/available`)
-      .then((x) => setAvailableActions(x.data.availableActions));
+    api
+      .get<ActionResponse>(API_ROUTES.ACTION.AVAILABLE)
+      .then((x) => setAvailableActions(x.availableActions));
 
     console.log(availableActions)
   }, []);
@@ -78,7 +99,9 @@ function useAvailableActionsAndTriggers() {
 
 export function Canvas() {
   const router = useRouter();
+  const params = useParams(); // { zapId: '...' }
   const reactFlowWrapper = useRef(null);
+  const { success, error } = useToast();
 
   const { availableActions, availableTriggers } = useAvailableActionsAndTriggers();
   const { getNode } = useReactFlow();
@@ -89,15 +112,119 @@ export function Canvas() {
   const { screenToFlowPosition } = useReactFlow();
 
   const [openModal, setOpenModal] = useState(false);
-  const [openSecondModal, setSecondModal] = useState(false);
   const [selectedAction, setSelectedAction] = useState<Action | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [zapName, setZapName] = useState("Untitled Zap");
+
+  const filteredTriggers = availableTriggers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredActions = availableActions.filter(a => a.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
 
   const [nodeId, setNodeId] = useState("");
 
+  // Load existing Zap data if we are in Edit mode
+  useEffect(() => {
+    if (params.zapId) {
+      const fetchZap = async () => {
+        try {
+          const res = await api.get<any>(`${API_ROUTES.ZAP.GET_ALL}/${params.zapId}`);
+          const zap = res.zap;
+
+          if (!zap) return;
+
+          setZapName(zap.name);
+
+          const triggerNode: Node = {
+            id: "1",
+            type: "zapNode",
+            data: {
+              label: zap.trigger?.type?.name || "Trigger",
+              isTrigger: true,
+              subtitle: "1. Start",
+              triggerId: zap.trigger?.type?.id,
+              icon: zap.trigger?.type?.image || "",
+              metadata: zap.trigger?.metadata || {}
+            },
+            position: { x: 250, y: 50 },
+            deletable: false,
+            origin: nodeOrigin
+          };
+
+          const sortedActions = (zap.actions || []).sort((a: any, b: any) => a.sortingOrder - b.sortingOrder);
+
+          const actionNodes: Node[] = sortedActions.map((action: any, index: number) => {
+            const nodeId = (index + 2).toString();
+            return {
+              id: nodeId,
+              type: "zapNode",
+              data: {
+                label: action.type.name,
+                isTrigger: false,
+                subtitle: `${index + 2}. Action`,
+                actionId: action.type.id,
+                icon: action.type.image,
+                metadata: action.metadata || {}
+              },
+              position: { x: 250, y: 150 + (index + 1) * 100 },
+              origin: nodeOrigin
+            };
+          });
+
+          const allNodes = [triggerNode, ...actionNodes];
+          setNodes(allNodes);
+
+          // Reconstruct Edges
+          const newEdges: Edge[] = [];
+          // Link Trigger to First Action
+          if (actionNodes.length > 0) {
+            newEdges.push({
+              id: `e1-2`,
+              source: "1",
+              target: "2",
+              type: 'addButton',
+              animated: true,
+              data: { onEdgeClick: () => { } }
+            });
+          }
+          // Link Actions
+          for (let i = 0; i < actionNodes.length - 1; i++) {
+            const source = actionNodes[i].id;
+            const target = actionNodes[i + 1].id;
+            newEdges.push({
+              id: `e${source}-${target}`,
+              source,
+              target,
+              type: 'addButton',
+              animated: true,
+              data: { onEdgeClick: () => { } }
+            });
+          }
+          setEdges(newEdges);
+
+        } catch (err) {
+          console.error("Failed to load zap", err);
+          error("Failed to load zap details");
+        }
+      };
+
+      fetchZap();
+    }
+  }, [params.zapId, setNodes, setEdges, setZapName, error]);
+
+
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    []
+    (params: Connection) => {
+      // Prevent branching: excessive outgoers
+      const sourceNode = nodes.find(n => n.id === params.source);
+      if (sourceNode) {
+        const outgoers = getOutgoers(sourceNode, nodes, edges);
+        if (outgoers.length > 0) return; // Already has an output
+      }
+
+      const edge = { ...params, type: 'addButton', animated: false, data: { onEdgeClick: (id: string) => console.log("Add node on edge", id) } };
+      setEdges((eds) => addEdge(edge, eds));
+    },
+    [setEdges, nodes, edges],
   );
 
   const onConnectEnd = useCallback(
@@ -105,51 +232,46 @@ export function Canvas() {
       event: MouseEvent | TouchEvent,
       connectionState: FinalConnectionState) => {
       // when a connection is dropped on the pane it's not valid
-      if (!connectionState.isValid) {
-        // we need to remove the wrapper bounds, in order to get the correct position
-        // const id = getId();
+      if (!connectionState.isValid && connectionState.fromNode) {
+
+        const sourceNode = nodes.find(n => n.id === connectionState.fromNode?.id);
+        if (sourceNode) {
+          const outgoers = getOutgoers(sourceNode, nodes, edges);
+          if (outgoers.length > 0) return; // Prevent branching
+        }
 
         const { clientX, clientY } =
           'changedTouches' in event ? event.changedTouches[0] : event;
 
-        const sourceId = (connectionState.fromNode != null) ? connectionState.fromNode.id : "2";
-        const targetId = parseInt(sourceId) + 1;
-        const edgeId = `e${sourceId}-${targetId.toString()}`;
-        // setNodes((nds) => nds.concat(newNode));
-        setNodes((nds) => {
-          const updatedNodes = nds.map((node) => ({
-            ...node,
-            connectable: false,
-          }));
-          const newNode = {
-            id: targetId.toString(),
-            position: screenToFlowPosition({
-              x: clientX - 90,
-              y: clientY,
-            }),
-            data: { label: `${targetId}. Action` },
-            nodeOrigin: nodeOrigin,
-            connectable: true
+        const sourceId = connectionState.fromNode.id;
+        const newNodeId = (Math.floor(Math.random() * 1000000)).toString();
+        const nextStepIndex = nodes.length + 1;
 
-          };
-          return [...updatedNodes, newNode]
-
-        })
-
-
-
-        setEdges((eds) =>
-          eds.concat({
-            id: edgeId,
-            source: sourceId,
-            target: targetId.toString(),
-            type: 'straight',
-
+        const newNode = {
+          id: newNodeId,
+          type: "zapNode",
+          position: screenToFlowPosition({
+            x: clientX - 90,
+            y: clientY,
           }),
-        );
+          data: { label: "Action", isTrigger: false, subtitle: `${nextStepIndex}. Action` },
+          nodeOrigin: nodeOrigin,
+        };
+
+        const newEdge = {
+          id: `e${sourceId}-${newNodeId}`,
+          source: sourceId,
+          target: newNodeId,
+          type: 'addButton',
+          animated: false,
+          data: { onEdgeClick: (id: string) => console.log("Add node on edge", id) }
+        };
+
+        setNodes((nds) => nds.concat(newNode));
+        setEdges((eds) => eds.concat(newEdge));
       }
     },
-    [screenToFlowPosition, setEdges, setNodes],
+    [screenToFlowPosition, nodes, edges, setNodes, setEdges],
   );
 
   const onNodesDelete = useCallback(
@@ -207,534 +329,269 @@ export function Canvas() {
   );
 
   function onNodeClick(event: React.MouseEvent, node: Node) {
+    // If clicking an Action Node that is already configured
+    if (node.id !== "1" && node.data?.actionId) {
+      const action = availableActions.find(a => a.id === node.data.actionId);
+      if (action) {
+        setSelectedAction(action);
+        setNodeId(node.id);
+        setOpenModal(false);
+        return;
+      }
+    }
+
+    // Default behavior (App Chooser)
     setOpenModal(true);
     setNodeId(node.id);
-    console.log(node);
-    // setSelectedModalIndex(1);
   }
 
   const updateNodeMetadata = (metadata: any) => {
     setNodes((prevNodes) =>
-      prevNodes.map((node) =>
-        node.id === nodeId
-          ? {
-            ...node,
-            data: {
-              ...node.data,
-              metadata,
-            },
+      prevNodes.map((node) => {
+        if (node.id === nodeId) {
+          const newData: any = { ...node.data, metadata };
+          // If saving an action, update its label/icon/ID here
+          if (nodeId !== "1" && selectedAction) {
+            newData.label = selectedAction.name;
+            newData.icon = selectedAction.image;
+            newData.actionId = selectedAction.id;
           }
-          : node
-      )
+          return { ...node, data: newData };
+        }
+        return node;
+      })
     );
-    setSecondModal(false);
   };
 
   const handlePublish = async () => {
     const triggerNode = nodes.find((n) => n.id === "1");
 
-    if (!triggerNode || !triggerNode.data?.label) {
+    if (!triggerNode || !triggerNode.data?.triggerId) {
       alert("Trigger not selected.");
       return;
     }
 
-    // Extracting 'webhook' from '1. webhook'
-    const availableTriggerId = (triggerNode.data.label as string).split('. ')[1];
+    const availableTriggerId = triggerNode.data.triggerId;
 
     const actions = nodes
       .filter(n => n.id !== triggerNode.id)
       .map(n => {
-        const availableActionId = (n.data.label as string)?.split(". ")[1] || "";
-
         return {
-          availableActionId,
+          availableActionId: n.data.actionId || "", // Use stored ID
           sortingOrder: parseInt(n.id) - 1,
           actionMetadata: n.data.metadata || {},
         };
       });
 
     try {
-      await axios.post(`${BACKEND_URL}/api/v1/zap/create`, {
+      await api.post(API_ROUTES.ZAP.CREATE, {
         availableTriggerId: availableTriggerId,
         actions,
-      },
-        {
-          headers: {
-            Authorization: localStorage.getItem("token") || "", // no Bearer prefix
-          },
-        }
+        name: zapName
+      });
 
-      );
-
-      alert("Zap Created!");
+      success("Zap Created!");
       router.push("/dashboard");
     } catch (err) {
-      alert("Failed to publish zap.");
+      error("Failed to publish zap.");
     }
   };
 
 
 
 
-  return (
-    <div className="bg-gray-100" style={{ width: "100%" }}>
+  // Strict validation to prevent branching (1->Many) and merging (Many->1)
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge) => {
+      const sourceNode = nodes.find((n) => n.id === connection.source);
+      const targetNode = nodes.find((n) => n.id === connection.target);
 
-      <TopBar handlePublish={handlePublish} />
+      if (!sourceNode || !targetNode) return false;
 
+      // Check if source already has an outgoing connection
+      const outgoers = getOutgoers(sourceNode, nodes, edges);
+      if (outgoers.length > 0) return false;
 
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onConnectEnd={onConnectEnd}
-        onNodesDelete={onNodesDelete}
-        onNodeClick={onNodeClick}
-        fitView
-      >
-        <MiniMap />
-        <Controls />
-        <Background color="black" bgColor="" gap={10} className="h-11/12" />
-      </ReactFlow>
+      // Check if target already has an incoming connection
+      const incomers = getIncomers(targetNode, nodes, edges);
+      if (incomers.length > 0) return false;
 
-      <Modal show={openModal} onClose={() => setOpenModal(false)}>
-
-        <div className="bg-white p-5 rounded-2xl flex flex-col gap-5">
-          <div className="flex justify-between">
-            <h2 className="text-2xl font-semibold">Select</h2>
-            <Button color="gray" onClick={() => setOpenModal(false)}>Close</Button>
-          </div>
-
-          <div>
-            {(nodeId == "1") ? <div className="flex flex-col gap-3 m-2">
-              {availableTriggers.map((trigger) => (
-                <div onClick={() => {
-                  const node = getNode(nodeId);
-                  if (node != null) node.data.label = `${node.id}. ${trigger.name}`
-                  setOpenModal(false)
-                }} className="flex gap-5 cursor-pointer h-5">
-                  <img className="w-5 h-5 object-contain" src={`${trigger.image}`} alt="" />
-                  <span>{trigger.name}</span>
-                </div>
-              )
-
-              )}
-
-            </div> : <div className="flex flex-col gap-3 m-2">
-
-              {availableActions.map((action) => (
-                <div onClick={() => {
-                  const node = getNode(nodeId);
-                  if (node != null) node.data.label = `${node.id}. ${action.name}`
-
-                  setOpenModal(false)
-                  setSelectedAction(action);
-                  setSecondModal(true);
-
-                }} className="flex gap-5 cursor-pointer h-5">
-
-                  <img className="w-5 h-5 object-contain" src={`${action.image}`} alt="" />
-                  <span>{action.name}</span>
-
-                </div>
-              ))}
-
-
-            </div>
-            }
-          </div>
-        </div>
-
-      </Modal>
-
-
-      <Modal show={openSecondModal} onClose={() => setSecondModal(false)}>
-        <div className="bg-white p-5 rounded-2xl flex flex-col gap-5">
-          <div className="flex justify-between">
-            <h2 className="text-lg font-semibold">Configure: {selectedAction?.name}</h2>
-            <Button color="gray" onClick={() => setSecondModal(false)}>Close</Button>
-          </div>
-
-          {/* You can add inputs here for configuration */}
-          <div>
-            {selectedAction?.name === "email" && <EmailSelector setMetadata={updateNodeMetadata} />}
-            {selectedAction?.name === "Solana" && <SolanaSelector setMetadata={updateNodeMetadata} />}
-            {selectedAction?.name === "Google Calender" && <GoogleCalendarSelector setMetadata={updateNodeMetadata} />}
-            {selectedAction?.name === "Google Sheet" && <GoogleSheetSelector setMetadata={updateNodeMetadata} />}
-          </div>
-        </div>
-      </Modal>
-
-    </div>
+      return true;
+    },
+    [nodes, edges]
   );
-}
-
-const Input = ({ label, placeholder, onChange, type = "text" }: {
-  label: string;
-  placeholder: string;
-  onChange: (e: any) => void;
-  type?: "text" | "password"
-}) => {
-  return <div>
-    <div className="text-sm pb-1 pt-2">
-      * <label>{label}</label>
-    </div>
-    <input className="border rounded px-4 py-2 w-full border-black" type={type} placeholder={placeholder} onChange={onChange} />
-  </div>
-}
-
-function EmailSelector({ setMetadata }: {
-  setMetadata: (params: any) => void;
-}) {
-  const [email, setEmail] = useState("");
-  const [body, setBody] = useState("");
-
-  return <div>
-    <Input label={"To"} type={"text"} placeholder="To" onChange={(e) => setEmail(e.target.value)}></Input>
-    <Input label={"Body"} type={"text"} placeholder="Body" onChange={(e) => setBody(e.target.value)}></Input>
-    <div className="pt-2">
-      <PrimaryButton onClick={() => {
-        setMetadata({
-          email,
-          body
-        })
-      }}>Submit</PrimaryButton>
-    </div>
-  </div>
-}
-
-function SolanaSelector({ setMetadata }: {
-  setMetadata: (params: any) => void;
-}) {
-  const [amount, setAmount] = useState("");
-  const [address, setAddress] = useState("");
-
-  return <div>
-    <Input label={"To"} type={"text"} placeholder="To" onChange={(e) => setAddress(e.target.value)}></Input>
-    <Input label={"Amount"} type={"text"} placeholder="To" onChange={(e) => setAmount(e.target.value)}></Input>
-    <div className="pt-4">
-      <PrimaryButton onClick={() => {
-        setMetadata({
-          amount,
-          address
-        })
-      }}>Submit</PrimaryButton>
-    </div>
-  </div>
-}
-
-
-type CalendarEventMetadata = {
-  title: string;
-  description: string;
-  location: string;
-  start: string;
-  end: string;
-};
-
-function GoogleCalendarSelector({
-  setMetadata,
-}: {
-  setMetadata: (params: CalendarEventMetadata) => void;
-}) {
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [title, setTitle] = useState("");
-  const [location, setLocation] = useState("");
-  const [description, setDescription] = useState("");
-
-  const getOffset = () => {
-    const offset = new Date().getTimezoneOffset(); // in minutes
-    const absOffset = Math.abs(offset);
-    const hours = String(Math.floor(absOffset / 60)).padStart(2, "0");
-    const minutes = String(absOffset % 60).padStart(2, "0");
-    const sign = offset <= 0 ? "+" : "-";
-    return `${sign}${hours}:${minutes}`;
-  };
-
-  const handleSubmit = () => {
-    if (!start || !end || !title) {
-      alert("Please fill in the title, start time, and end time.");
-      return;
-    }
-
-    const offset = getOffset(); // e.g., "+05:30"
-    const startWithOffset = `${start}${offset}`;
-    const endWithOffset = `${end}${offset}`;
-
-    const metadata: CalendarEventMetadata = {
-      title,
-      location,
-      description,
-      start: startWithOffset,
-      end: endWithOffset,
-    };
-
-    console.log("✅ Metadata to save:", metadata);
-    setMetadata(metadata);
-    alert("Configuration saved!");
-  };
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-md w-full max-w-md border border-gray-200">
-      <div className="space-y-4">
-        <h3 className="text-lg font-semibold text-gray-800">
-          Configure Google Calendar Event
-        </h3>
-
-        <div>
-          <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-1">
-            Title *
-          </label>
-          <input
-            id="title"
-            type="text"
-            placeholder="Meeting with the team"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-            required
+    <div className="h-full w-full bg-gradient-to-br from-slate-50 via-slate-50 to-blue-50 relative flex flex-col">
+      <TopBar handlePublish={handlePublish} zapName={zapName} setZapName={setZapName} />
+      <div className="flex-1 w-full relative">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onConnectEnd={onConnectEnd}
+          onNodesDelete={onNodesDelete}
+          onNodeClick={onNodeClick}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          defaultEdgeOptions={{ type: 'addButton', animated: true, style: { stroke: '#a78bfa', strokeWidth: 2 } }}
+          isValidConnection={isValidConnection}
+          fitView
+          className="bg-transparent"
+        >
+          <MiniMap className="!bg-white border border-gray-200 rounded-lg shadow-lg" />
+          <Controls className="bg-gradient-to-b from-white to-gray-50 border border-gray-200 shadow-lg rounded-lg overflow-hidden text-gray-700" />
+          <Background
+            color="#cbd5e1"
+            gap={16}
+            size={1}
+            variant={BackgroundVariant.Dots}
           />
-        </div>
-
-        <div>
-          <label htmlFor="location" className="block text-sm font-medium text-gray-700 mb-1">
-            Location
-          </label>
-          <input
-            id="location"
-            type="text"
-            placeholder="e.g., Google Meet"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-            className="w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">
-            Description
-          </label>
-          <textarea
-            id="description"
-            placeholder="Discussing Q3 roadmap..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={3}
-            className="w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="start" className="block text-sm font-medium text-gray-700 mb-1">
-              Start Time *
-            </label>
-            <input
-              id="start"
-              type="datetime-local"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-              className="w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-              required
-            />
-          </div>
-          <div>
-            <label htmlFor="end" className="block text-sm font-medium text-gray-700 mb-1">
-              End Time *
-            </label>
-            <input
-              id="end"
-              type="datetime-local"
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
-              className="w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-              required
-            />
-          </div>
-        </div>
-
-        <div className="pt-2">
-          <button
-            onClick={handleSubmit}
-            className="w-full bg-blue-600 text-white font-semibold px-4 py-2.5 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition"
-          >
-            Save Configuration
-          </button>
-        </div>
+        </ReactFlow>
       </div>
-    </div>
-  );
-}
 
+      <Modal show={openModal} onClose={() => { setOpenModal(false); setSearchTerm(""); }} size="4xl" popup>
+        <div className="bg-gradient-to-b from-white via-blue-50 to-purple-50 ease-out duration-300 rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
+          <div className="flex flex-col p-8 border-b border-gray-200 bg-gradient-to-r from-white via-blue-50 to-purple-50">
+            <div className="flex justify-between items-start mb-6">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-2 h-8 rounded-full bg-gradient-to-b from-purple-600 to-blue-600"></div>
+                  <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
+                    Choose Your {nodeId === "1" ? "Trigger" : "Action"}
+                  </h2>
+                </div>
+                <p className="text-gray-600 font-medium ml-5">
+                  {nodeId === "1"
+                    ? "Select what should start this workflow"
+                    : "Pick what happens next in your automation"}
+                </p>
+              </div>
+              <button
+                onClick={() => { setOpenModal(false); setSearchTerm(""); }}
+                className="text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-gray-100 transition-all hover:scale-110"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
 
+            <div className="relative mt-4">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <svg className="h-5 w-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+              <input
+                type="text"
+                className="block w-full pl-11 pr-4 py-3 bg-white border-2 border-gray-200 hover:border-purple-300 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 transition-all font-medium focus:outline-none"
+                placeholder="Search by app name..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                autoFocus
+              />
+            </div>
+          </div>
 
-const SearchIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>;
-const RefreshCwIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M3 21v-5h5" /></svg>;
-const ChevronDownIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>;
-
-interface Sheet { id: string; name: string; }
-// interface SelectorProps { onSave: (metadata: any) => {} }
-
-interface CustomDropdownProps {
-  label: string;
-  placeholder: string;
-  options: string[];
-  onSelect: (value: string) => void;
-  selectedValue: string | null | undefined;
-  isLoading: boolean;
-}
-
-const CustomDropdown = ({ label, placeholder, options, onSelect, selectedValue, isLoading }: CustomDropdownProps) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const displayValue = selectedValue || placeholder;
-
-  return (
-    <div className="relative mb-4">
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label} *</label>
-      <button onClick={() => setIsOpen(!isOpen)} disabled={isLoading || !options.length} className="w-full flex justify-between items-center bg-white border border-gray-300 rounded-md px-3 py-2 text-left text-gray-800 disabled:bg-gray-100">
-        <span>{isLoading ? "Loading..." : displayValue}</span>
-        <ChevronDownIcon />
-      </button>
-      {isOpen && (
-        <div className="absolute z-10 top-full mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-xl">
-          <ul className="py-1 max-h-60 overflow-y-auto">
-            {options.map((option: string) => (
-              <li key={option} onClick={() => { onSelect(option); setIsOpen(false); }} className="px-4 py-2 text-sm text-gray-800 hover:bg-blue-50 cursor-pointer">{option}</li>
-            ))}
-          </ul>
+          <div className="p-8 bg-gradient-to-b from-slate-50/50 to-blue-50/30 min-h-[450px]">
+            {nodeId === "1" ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+                {filteredTriggers.map((trigger) => (
+                  <div
+                    key={trigger.id}
+                    onClick={() => {
+                      const node = getNode(nodeId);
+                      if (node != null) {
+                        node.data.label = trigger.name;
+                        node.data.icon = trigger.image;
+                        node.data.triggerId = trigger.id;
+                      }
+                      setOpenModal(false);
+                      setSearchTerm("");
+                    }}
+                    className="group flex flex-col items-center justify-center p-6 bg-gradient-to-br from-white to-blue-50 rounded-2xl border-2 border-gray-200 hover:border-blue-400 hover:shadow-xl hover:shadow-blue-500/20 cursor-pointer transition-all duration-300 transform hover:-translate-y-2"
+                  >
+                    <div className="w-16 h-16 mb-4 rounded-xl bg-gradient-to-br from-blue-100 to-blue-50 group-hover:from-blue-200 group-hover:to-blue-100 flex items-center justify-center transition-all duration-300 border-2 border-blue-200 shadow-md">
+                      <img className="w-10 h-10 object-contain" src={trigger.image} alt={trigger.name} />
+                    </div>
+                    <h3 className="font-bold text-slate-700 group-hover:text-blue-700 text-center transition-colors text-sm">{trigger.name}</h3>
+                    <div className="mt-2 px-2 py-1 rounded-full text-xs font-semibold text-blue-600 bg-blue-50 group-hover:bg-blue-100 transition-colors">
+                      Trigger
+                    </div>
+                  </div>
+                ))}
+                {filteredTriggers.length === 0 && (
+                  <div className="col-span-full flex flex-col items-center justify-center py-16 text-gray-400">
+                    <svg className="w-16 h-16 mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <p className="font-medium text-center">No triggers found</p>
+                    <p className="text-sm mt-1">Try searching for "{searchTerm}"</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+                {filteredActions.map((action) => (
+                  <div
+                    key={action.id}
+                    onClick={() => {
+                      setOpenModal(false);
+                      setSearchTerm("");
+                      setSelectedAction(action);
+                      setNodes((nds) => nds.map(n => {
+                        if (n.id === nodeId) {
+                          return {
+                            ...n,
+                            data: {
+                              ...n.data,
+                              label: action.name,
+                              icon: action.image,
+                              actionId: action.id,
+                            }
+                          }
+                        }
+                        return n;
+                      }));
+                    }}
+                    className="group flex flex-col items-center justify-center p-6 bg-gradient-to-br from-white to-purple-50 rounded-2xl border-2 border-gray-200 hover:border-purple-400 hover:shadow-xl hover:shadow-purple-500/20 cursor-pointer transition-all duration-300 transform hover:-translate-y-2"
+                  >
+                    <div className="w-16 h-16 mb-4 rounded-xl bg-gradient-to-br from-purple-100 to-purple-50 group-hover:from-purple-200 group-hover:to-purple-100 flex items-center justify-center transition-all duration-300 border-2 border-purple-200 shadow-md">
+                      <img className="w-10 h-10 object-contain" src={action.image} alt={action.name} />
+                    </div>
+                    <h3 className="font-bold text-slate-700 group-hover:text-purple-700 text-center transition-colors text-sm">{action.name}</h3>
+                    <div className="mt-2 px-2 py-1 rounded-full text-xs font-semibold text-purple-600 bg-purple-50 group-hover:bg-purple-100 transition-colors">
+                      Action
+                    </div>
+                  </div>
+                ))}
+                {filteredActions.length === 0 && (
+                  <div className="col-span-full flex flex-col items-center justify-center py-16 text-gray-400">
+                    <svg className="w-16 h-16 mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <p className="font-medium text-center">No actions found</p>
+                    <p className="text-sm mt-1">Try searching for "{searchTerm}"</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      )}
-    </div>
-  );
-};
+      </Modal>
 
-
-function GoogleSheetSelector({ setMetadata }: {
-  setMetadata: (params: any) => void;
-}) {
-  const [spreadsheets, setSpreadsheets] = useState<Sheet[]>([]);
-  const [selectedSpreadsheet, setSelectedSpreadsheet] = useState<Sheet | null>(null);
-
-  const [worksheets, setWorksheets] = useState<string[]>([]);
-  const [selectedWorksheet, setSelectedWorksheet] = useState<string | null>(null);
-
-  const [columns, setColumns] = useState<string[]>([]);
-  const [columnValues, setColumnValues] = useState<Record<string, string>>({});
-
-  const [loading, setLoading] = useState({ spreadsheets: false, worksheets: false, columns: false });
-
-  useEffect(() => {
-    setLoading(prev => ({ ...prev, spreadsheets: true }));
-    axios.get<any>(`${BACKEND_URL}/api/v1/google/sheets`, { headers: { "authorization": localStorage.getItem("token") } })
-      .then(res => setSpreadsheets(res.data.sheets))
-      .catch(err => console.error("Failed to fetch spreadsheets:", err))
-      .then(() => {
-        setLoading(prev => ({ ...prev, spreadsheets: false }));
-      });
-  }, []);
-
-  useEffect(() => {
-    if (selectedSpreadsheet) {
-      setWorksheets([]);
-      setSelectedWorksheet(null);
-      setColumns([]);
-      setColumnValues({});
-      setLoading(prev => ({ ...prev, worksheets: true }));
-      axios.get<any>(`${BACKEND_URL}/api/v1/google/sheets/${selectedSpreadsheet.id}/worksheets`, { headers: { "authorization": localStorage.getItem("token") } })
-        .then(res => setWorksheets(res.data.worksheets))
-        .catch(err => console.error("Failed to fetch worksheets:", err))
-        .then(() => {
-          setLoading(prev => ({ ...prev, worksheets: false }));
-        });
-    }
-  }, [selectedSpreadsheet]);
-
-  useEffect(() => {
-    if (selectedSpreadsheet && selectedWorksheet) {
-      setColumns([]);
-      setColumnValues({});
-      setLoading(prev => ({ ...prev, columns: true }));
-      axios.get<any>(`${BACKEND_URL}/api/v1/google/sheets/${selectedSpreadsheet.id}/worksheets/${encodeURIComponent(selectedWorksheet)}/columns`, { headers: { "authorization": localStorage.getItem("token") } })
-        .then(res => setColumns(res.data.columns))
-        .catch(err => console.error("Failed to fetch columns:", err))
-        .then(() => {
-          setLoading(prev => ({ ...prev, columns: false }));
-        });
-    }
-  }, [selectedSpreadsheet, selectedWorksheet]);
-
-  const handleColumnChange = (column: string, value: string) => {
-    setColumnValues(prev => ({ ...prev, [column]: value }));
-  };
-
-  const handleSave = () => {
-    // const metadata = {
-    //     spreadsheetId: selectedSpreadsheet?.id,
-    //     sheetName: selectedWorksheet,
-    //     values: columns.map(col => columnValues[col] || "")
-    // };
-    setMetadata({
-      spreadsheetId: selectedSpreadsheet?.id,
-      sheetName: selectedWorksheet,
-      values: columns.map(col => columnValues[col] || "")
-    })
-    alert("Configuration saved!");
-  };
-
-  return (
-    <div className="p-4">
-      <CustomDropdown
-        label="Spreadsheet"
-        placeholder="Select a spreadsheet"
-        options={spreadsheets.map(s => s.name)}
-        selectedValue={selectedSpreadsheet?.name}
-        onSelect={(name: string) => setSelectedSpreadsheet(spreadsheets.find(s => s.name === name) || null)}
-        isLoading={loading.spreadsheets}
+      <ConfigurationSidebar
+        isOpen={!!selectedAction || (nodeId === "1" && !openModal)}
+        onClose={() => {
+          setSelectedAction(null);
+          setNodeId("");
+        }}
+        selectedNodeId={nodeId}
+        selectedAction={selectedAction}
+        selectedTrigger={nodeId === "1" ? availableTriggers.find(t => t.id === nodes.find(n => n.id === "1")?.data?.triggerId) || null : null}
+        updateNodeMetadata={updateNodeMetadata}
+        zapId={params.zapId as string}
+        nodes={nodes}
+        onChangeAction={() => setOpenModal(true)}
       />
 
-      {selectedSpreadsheet && (
-        <CustomDropdown
-          label="Worksheet"
-          placeholder="Select a worksheet"
-          options={worksheets}
-          selectedValue={selectedWorksheet}
-          onSelect={setSelectedWorksheet}
-          isLoading={loading.worksheets}
-        />
-      )}
-
-      {selectedWorksheet && loading.columns && <p className="text-sm text-gray-500">Loading columns...</p>}
-      {columns.length > 0 && (
-        <div className="mt-4 border-t pt-4">
-          <h4 className="font-semibold mb-2 text-gray-800">Map Columns</h4>
-          <div className="space-y-3">
-            {columns.map(col => (
-              <div key={col}>
-                <label className="block text-sm font-medium text-gray-700">{col}</label>
-                <input
-                  type="text"
-                  placeholder={`Value for ${col}`}
-                  onChange={(e) => handleColumnChange(col, e.target.value)}
-                  className="mt-1 w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="pt-4 mt-4 border-t">
-        <button
-          onClick={handleSave}
-          disabled={!selectedWorksheet || columns.length === 0}
-          className="w-full bg-blue-600 text-white font-semibold py-2.5 rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-        >
-          Save Configuration
-        </button>
-      </div>
     </div>
   );
 }
-

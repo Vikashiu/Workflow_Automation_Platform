@@ -89,7 +89,7 @@ function main() {
                 case 3:
                     _a.sent();
                     return [4 /*yield*/, prisma.availableAction.upsert({
-                            where: { id: "Google Calendar" },
+                            where: { id: "Google_Calendar" },
                             update: {},
                             create: {
                                 id: "Google_Calendar",
@@ -98,6 +98,50 @@ function main() {
                             }
                         })];
                 case 4:
+                    _a.sent();
+                    return [4 /*yield*/, prisma.availableAction.upsert({
+                            where: { id: "Notion" },
+                            update: {},
+                            create: {
+                                id: "Notion",
+                                name: "Notion",
+                                image: "https://upload.wikimedia.org/wikipedia/commons/4/45/Notion_app_logo.png"
+                            }
+                        })];
+                case 5:
+                    _a.sent();
+                    return [4 /*yield*/, prisma.availableAction.upsert({
+                            where: { id: "Gemini" },
+                            update: {},
+                            create: {
+                                id: "Gemini",
+                                name: "Gemini",
+                                image: "https://upload.wikimedia.org/wikipedia/commons/8/8a/Google_Gemini_logo.svg"
+                            }
+                        })];
+                case 6:
+                    _a.sent();
+                    return [4 /*yield*/, prisma.availableAction.upsert({
+                            where: { id: "Slack" },
+                            update: {},
+                            create: {
+                                id: "Slack",
+                                name: "Slack",
+                                image: "https://upload.wikimedia.org/wikipedia/commons/d/d5/Slack_icon_2019.svg"
+                            }
+                        })];
+                case 7:
+                    _a.sent();
+                    return [4 /*yield*/, prisma.availableAction.upsert({
+                            where: { id: "Discord" },
+                            update: {},
+                            create: {
+                                id: "Discord",
+                                name: "Discord",
+                                image: "https://assets-global.website-files.com/6257adef93867e56f84d3092/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png"
+                            }
+                        })];
+                case 8:
                     _a.sent();
                     return [2 /*return*/];
             }

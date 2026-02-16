@@ -23,6 +23,7 @@ model User {
 
 model Zap {
   id        String   @id @default(uuid())
+  name      String   @default("Untitled")
   TriggerId String
   userId    Int
   trigger   Trigger?
@@ -32,12 +33,13 @@ model Zap {
 }
 
 model Trigger {
-  id        String            @id @default(uuid())
-  zapId     String            @unique
-  TriggerId String
-  metadata     Json            @default("{}")
-  type      AvailableTriggers @relation(fields: [TriggerId], references: [id])
-  zap       Zap               @relation(fields: [zapId], references: [id])
+  id            String            @id @default(uuid())
+  zapId         String            @unique
+  TriggerId     String
+  metadata      Json              @default("{}")
+  samplePayload Json              @default("{}") // Sample JSON payload for field extraction
+  type          AvailableTriggers @relation(fields: [TriggerId], references: [id])
+  zap           Zap               @relation(fields: [zapId], references: [id])
 }
 
 model AvailableTriggers {
@@ -65,11 +67,13 @@ model AvailableAction {
 }
 
 model ZapRun {
-  id           String        @id @default(uuid())
-  zapId        String
-  metadata     Json
-  zap          Zap           @relation(fields: [zapId], references: [id])
-  zapRunOutbox ZapRunOutbox?
+  id            String        @id @default(uuid())
+  zapId         String
+  metadata      Json          @default("{}")          // DEPRECATED: Left for compatibility
+  payload       Json          @default("{}")          // Actual webhook event payload from trigger
+  createdAt     DateTime      @default(now())
+  zap           Zap           @relation(fields: [zapId], references: [id])
+  zapRunOutbox  ZapRunOutbox?
 }
 
 model ZapRunOutbox {

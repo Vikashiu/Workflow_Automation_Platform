@@ -12,11 +12,12 @@ export const SigninData = z.object({
 });
 
 export const ZapCreateSchema = z.object({
+    name: z.string().optional(),
     availableTriggerId: z.string(),
     triggerMetadata: z.any().optional(),
     actions: z.array(z.object({
         availableActionId: z.string(),
-        sortingOrder:z.number(),
+        sortingOrder: z.number(),
         actionMetadata: z.any().optional()
     }))
 });

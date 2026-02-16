@@ -1,1 +1,1 @@
-{"root":["./src/index.ts","./src/utils/email.ts","./src/utils/google_calender.ts","./src/utils/google_sheet.ts","./src/utils/notion.ts"],"version":"5.8.3"}
+{"root":["./src/index.ts","./src/utils/discord.ts","./src/utils/email.ts","./src/utils/gemini.ts","./src/utils/google_calender.ts","./src/utils/google_sheet.ts","./src/utils/notion.ts","./src/utils/slack.ts"],"version":"5.8.3"}

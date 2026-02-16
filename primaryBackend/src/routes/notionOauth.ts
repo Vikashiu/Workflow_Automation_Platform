@@ -2,21 +2,26 @@ import { Router } from "express";
 import { PrismaClient } from "@prisma/client";
 const { v4: uuidv4 } = require("uuid");
 const app = Router();
+import { authMiddleware } from "../authMiddleware";
 const prisma = new PrismaClient();
 
 require("dotenv").config();
 
-app.get('/', (req, res) => {
-
+app.get('/', authMiddleware, (req, res) => {
+  // @ts-ignore
+  const userId = req.id;
   const redirect_uri = process.env.NOTION_REDIRECT_URI;
   const client_id = process.env.NOTION_CLIENT_ID;
-  const state = uuidv4();
+  const state = JSON.stringify({ userId }); // Pass userId in state
   const url = `https://api.notion.com/v1/oauth/authorize?owner=user&client_id=${client_id}&redirect_uri=${redirect_uri}&response_type=code&state=${state}`;
   res.redirect(url);
 });
 
 app.get('/callback', async (req, res) => {
-  const { code } = req.query;
+  const { code, state } = req.query;
+
+  // Retrieve userId from state
+  const { userId } = JSON.parse(state as string);
 
   const response = await fetch("https://api.notion.com/v1/oauth/token", {
     method: "POST",
@@ -31,41 +36,39 @@ app.get('/callback', async (req, res) => {
     })
   });
 
-  const data = await response.json(); // Contains access_token, workspace_id, bot_id, etc.
+  const data = await response.json();
 
   const {
     access_token,
     workspace_id,
     workspace_name,
     bot_id,
-    duplicated_template_id, // optional
-    owner
-} = data;
+  } = data;
 
-    const currentUserId =  "1"; // replace this!
+  if (!userId) {
+    res.status(400).send("User ID missing in state");
+    return;
+  }
 
-    await prisma.notionCredential.upsert({
-    where: { userId: currentUserId },
+  await prisma.notionCredential.upsert({
+    where: { userId: userId.toString() },
     update: {
-        accessToken: access_token,
-        botId: bot_id,
-        workspaceId: workspace_id,
-        workspaceName: workspace_name,
+      accessToken: access_token,
+      botId: bot_id,
+      workspaceId: workspace_id,
+      workspaceName: workspace_name,
     },
     create: {
-        userId: currentUserId,
-        accessToken: access_token,
-        botId: bot_id,
-        workspaceId: workspace_id,
-        workspaceName: workspace_name,
+      userId: userId.toString(),
+      accessToken: access_token,
+      botId: bot_id,
+      workspaceId: workspace_id,
+      workspaceName: workspace_name,
     },
-    });
+  });
 
-  // Save the token to DB per user
-  console.log("✅ Notion token received:", data);
-
-  // Redirect user to dashboard
-  res.redirect('/dashboard');
+  console.log("✅ Notion token received for user:", userId);
+  res.redirect('http://localhost:3001/dashboard'); // Redirect to frontend dashboard (adjust port if needed)
 })
 
 export const notionOauth = app;

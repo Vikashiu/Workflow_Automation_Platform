@@ -11,10 +11,12 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@notionhq/client": "^4.0.1",
     "@prisma/client": "^6.11.0",
     "@types/dotenv": "^6.1.1",
     "@types/nodemailer": "^6.4.17",
+    "axios": "^1.13.5",
     "dotenv": "^17.2.3",
     "googleapis": "^150.0.1",
     "kafkajs": "^2.2.4",

@@ -11,36 +11,37 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.appendNotionRow = appendNotionRow;
 const client_1 = require("@notionhq/client");
-const notion = new client_1.Client({
-    auth: "", // Your internal integration token
-});
-function appendNotionRow() {
+const client_2 = require("@prisma/client");
+const prismaClient = new client_2.PrismaClient();
+function appendNotionRow(userId, metadata) {
     return __awaiter(this, void 0, void 0, function* () {
-        //   const databaseId = process.env.NOTION_DB_ID; // Store in .env
+        const creds = yield prismaClient.notionCredential.findFirst({
+            where: { userId }
+        });
+        if (!creds) {
+            throw new Error("No Notion credentials found for user.");
+        }
+        const notion = new client_1.Client({
+            auth: creds.accessToken,
+        });
+        // metadata should contain databaseId and content (as defined in NotionSelector)
+        const databaseId = metadata.databaseId;
+        const content = metadata.content || "New Zap Item";
         const response = yield notion.pages.create({
-            parent: { database_id: "" },
+            parent: { database_id: databaseId },
             properties: {
                 Name: {
                     title: [
                         {
                             text: {
-                                content: "Zap Triggered",
+                                content: content,
                             },
                         },
                     ],
                 },
-                Status: {
-                    select: {
-                        name: "Pending", // must match an existing select option
-                    },
-                },
-                Date: {
-                    date: {
-                        start: new Date().toISOString(),
-                    },
-                },
+                // You can add more dynamic properties if you expand the Selector
             },
         });
-        console.log("✅ Row added:", response.id);
+        console.log("✅ Row added to Notion:", response.id);
     });
 }
