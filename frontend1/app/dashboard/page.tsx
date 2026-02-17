@@ -212,7 +212,37 @@ export default function DashboardPage() {
                     </div>
                 )}
 
+                <DeploymentInfoBar />
+
                 {loading ? <SkeletonLoader /> : <ZapGrid zaps={zaps} />}
+            </div>
+        </div>
+    );
+}
+
+// --- Deployment Info Bar ---
+
+function DeploymentInfoBar() {
+    return (
+        <div className="mb-8 p-5 bg-gradient-to-r from-blue-600/10 to-indigo-600/10 dark:from-blue-600/20 dark:to-indigo-600/20 border border-blue-200 dark:border-blue-800 rounded-2xl flex flex-col md:flex-row items-start md:items-center gap-4 relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                <svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="text-blue-600"><path d="M12 2v8" /><path d="m4.93 10.93 1.41 1.41" /><path d="M2 18h2" /><path d="M20 18h2" /><path d="m19.07 10.93-1.41 1.41" /><path d="M22 22H2" /><path d="m8 22 4-10 4 10" /></svg>
+            </div>
+
+            <div className="bg-blue-600 dark:bg-blue-500 p-3 rounded-xl text-white shadow-lg shadow-blue-500/20">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
+            </div>
+
+            <div className="flex-1">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Workflow Execution Guide</h3>
+                <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 max-w-3xl leading-relaxed">
+                    We're currently finalizing the cloud deployment. To run your workflows now, ensure your <span className="font-semibold text-blue-600 dark:text-blue-400">Worker</span> and <span className="font-semibold text-blue-600 dark:text-blue-400">Processor</span> services are running locally. Once active, they will automatically pick up and execute any data sent to your Zap's Webhook URL.
+                </p>
+            </div>
+
+            <div className="shrink-0 flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800/80 rounded-xl border border-blue-100 dark:border-blue-900/50 shadow-sm">
+                <div className="w-2h-2 w-2 h-2 rounded-full bg-amber-500 animate-pulse"></div>
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Local Mode Active</span>
             </div>
         </div>
     );
