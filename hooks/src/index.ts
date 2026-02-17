@@ -30,8 +30,9 @@ app.post("/hooks/catch/:userId/:zapId", async (req, res) => {
         const run = await tx.zapRun.create({
             data: {
                 zapId: zapId,
+                payload: body, // Store webhook payload in payload field
                 metadata: {
-                    trigger: body
+                    trigger: body // Also keep in metadata for backward compatibility
                 }
             }
         });

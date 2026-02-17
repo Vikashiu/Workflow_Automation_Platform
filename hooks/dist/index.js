@@ -73,8 +73,9 @@ app.post("/hooks/catch/:userId/:zapId", function (req, res) { return __awaiter(v
                                 case 0: return [4 /*yield*/, tx.zapRun.create({
                                         data: {
                                             zapId: zapId,
+                                            payload: body, // Store webhook payload in payload field
                                             metadata: {
-                                                trigger: body
+                                                trigger: body // Also keep in metadata for backward compatibility
                                             }
                                         }
                                     })];

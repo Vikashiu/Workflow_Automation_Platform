@@ -1,39 +1,39 @@
 "use client"
 import { useRouter } from "next/navigation"
-
-import { LinkButton } from "../buttons/LinkButtons"
 import Image from "next/image"
-import { OrrButton } from "../buttons/OrrButton"
+import { Button } from "../ui/Button"
+import Link from "next/link"
 
-
-export function SignupNav({ signupcheck }: { signupcheck?: boolean }) {
+export function SignupNav({ signupcheck }: { signupcheck: boolean }) {
     const router = useRouter();
-    const actionText = signupcheck ? "Log in" : "Sign up";
-    const actionPage = signupcheck ? "signin" : "signup";
+    const isSignup = signupcheck === true;
+    const buttonText = isSignup ? "Log in" : "Sign up";
+    const targetPath = isSignup ? "/signin" : "/signup";
 
     return (
-        <nav className="sticky top-0 z-50 w-full border-b border-gray-200 bg-white/80 backdrop-blur-md supports-[backdrop-filter]:bg-white/60">
-            <div className="flex h-16 items-center justify-between px-4 md:px-8 max-w-7xl mx-auto w-full">
-                <div className="flex items-center cursor-pointer" onClick={() => router.push('/')}>
-                    <Image
-                        src="/images/zapier_logo.png"
-                        alt="logo"
-                        width={100}
-                        height={28}
-                        className="object-contain"
-                    />
-                </div>
+        <nav className="flex h-16 border-b border-slate-200 dark:border-slate-800 justify-between items-center px-4 md:px-10 bg-white dark:bg-slate-950">
+            <Link href="/" className="flex items-center gap-2 transition-opacity hover:opacity-80">
+                <span className="text-xl font-bold bg-clip-text text-slate-900 dark:text-white">
+                    ZapClone
+                </span>
+            </Link>
 
-                <div className="flex items-center gap-4">
-                    <div className="hidden sm:flex items-center gap-1">
-                        <LinkButton text="Explore apps" />
-                        <LinkButton text="Contact sales" />
-                    </div>
-                    <OrrButton
-                        text={actionText}
-                        onClickhandler={() => router.push(`/${actionPage}`)}
-                    />
-                </div>
+            <div className="flex gap-6 items-center">
+                <Link href="#" className="hidden md:block text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+                    Explore apps
+                </Link>
+                <Link href="#" className="hidden md:block text-sm font-medium text-slate-600 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+                    Contact Sales
+                </Link>
+                <Link
+                    href={targetPath}
+                    className={`inline-flex items-center justify-center rounded-lg font-semibold transition-all duration-200 focus:outline-none h-10 px-5 text-sm ${isSignup
+                            ? "bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                            : "bg-primary-600 text-white hover:bg-primary-700 shadow-md hover:shadow-lg"
+                        }`}
+                >
+                    {buttonText}
+                </Link>
             </div>
         </nav>
     );

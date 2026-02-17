@@ -1,117 +1,138 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import AuthProviderButton from "./buttons/authProviderButton";
 import { FcGoogle } from "react-icons/fc";
-import { FaFacebook, FaMicrosoft } from "react-icons/fa";
-import { useAuth } from "@/contexts/AuthContext";
-import { useToast } from "@/contexts/ToastContext";
+import { FaFacebook, FaGithub } from "react-icons/fa";
+import { BACKEND_URL } from "@/app/config";
+import axios from "axios";
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import Link from "next/link";
+
+type LoginResponse = {
+  token: string;
+};
 
 export function LoginCard() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const { signin, loading } = useAuth();
-  const { error } = useToast();
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   const isValidEmail = (email: string) =>
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-  const handleContinue = async () => {
+  const handleContinue = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (!isValidEmail(email)) return;
-
+    setLoading(true);
     try {
-      await signin({ username: email, password });
-      // Navigation is handled by AuthContext
-    } catch (err) {
-      console.error(err);
-      error("Login failed. Please check your credentials.");
+      const res = await axios.post<LoginResponse>(
+        `${BACKEND_URL}/api/v1/user/signin`,
+        {
+          username: email,
+          password,
+        }
+      );
+      localStorage.setItem("token", res.data.token);
+      router.push("/dashboard");
+    } catch (e: any) {
+      console.error(e);
+      alert(e.response?.data?.message || "Login failed"); // Better error handling would be a toast
+    } finally {
+      setLoading(false);
     }
   };
-  return (
-    <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 w-full max-w-sm relative overflow-hidden">
-      {/* Decorative top gradient */}
-      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-purple-500 to-transparent opacity-70"></div>
 
-      <h2 className="text-2xl font-bold text-center mb-6 text-gray-900 tracking-tight">
-        Welcome back
-      </h2>
+  return (
+    <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-xl border border-slate-100 dark:border-slate-800 w-full max-w-sm mx-auto transition-all hover:shadow-2xl">
+      <div className="text-center mb-6">
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">
+          Welcome back
+        </h2>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          Log in to your account to continue
+        </p>
+      </div>
 
       <div className="flex flex-col gap-3">
-        <AuthProviderButton
-          icon={<FcGoogle size={20} />}
-          text="Continue with Google"
-          bgColor="bg-white hover:bg-gray-50 border border-gray-200 transition"
-          textColor="text-gray-700"
-        />
-        <AuthProviderButton
-          icon={<FaFacebook size={20} className="text-[#1877F2]" />}
-          text="Continue with Facebook"
-          bgColor="bg-white hover:bg-gray-50 border border-gray-200 transition"
-          textColor="text-gray-700"
-        />
-        <AuthProviderButton
-          icon={<FaMicrosoft size={20} />}
-          text="Continue with Microsoft"
-          bgColor="bg-white hover:bg-gray-50 border border-gray-200 transition"
-          textColor="text-gray-700"
-        />
+        <Button
+          variant="outline"
+          className="w-full justify-start pl-4"
+          leftIcon={<FcGoogle size={20} />}
+        >
+          Continue with Google
+        </Button>
+        <Button
+          variant="outline"
+          className="w-full justify-start pl-4"
+          leftIcon={<FaFacebook size={20} className="text-blue-600" />}
+        >
+          Continue with Facebook
+        </Button>
+        <Button
+          variant="outline"
+          className="w-full justify-start pl-4"
+          leftIcon={<FaGithub size={20} />}
+        >
+          Continue with GitHub
+        </Button>
       </div>
 
-      <div className="flex items-center my-6">
-        <hr className="flex-grow border-gray-200" />
-        <span className="mx-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">OR</span>
-        <hr className="flex-grow border-gray-200" />
-      </div>
-
-      <form onSubmit={(e) => { e.preventDefault(); handleContinue(); }} className="space-y-4">
-        <div>
-          <label className="text-sm font-medium text-gray-700 mb-1.5 block">
-            Email
-          </label>
-          <input
-            type="email"
-            placeholder="name@work-email.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all placeholder:text-gray-400 text-gray-900"
-          />
+      <div className="relative my-6">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-slate-200 dark:border-slate-700"></div>
         </div>
+        <div className="relative flex justify-center text-xs">
+          <span className="px-2 bg-white dark:bg-slate-900 text-slate-500">
+            Or continue with email
+          </span>
+        </div>
+      </div>
+
+      <form onSubmit={handleContinue} className="space-y-3">
+        <Input
+          label="Email"
+          type="email"
+          placeholder="you@example.com"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
 
         <div>
-          <label className="text-sm font-medium text-gray-700 mb-1.5 block">
-            Password
-          </label>
-          <input
+          <Input
+            label="Password"
             type="password"
             placeholder="••••••••"
+            required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all placeholder:text-gray-400 text-gray-900"
           />
+          <div className="flex justify-end mt-1">
+            <button type="button" className="text-xs text-primary-600 hover:text-primary-700 font-medium">Forgot password?</button>
+          </div>
         </div>
 
-        <button
+        <Button
           type="submit"
-          disabled={!isValidEmail(email) || loading}
-          className={`w-full py-2.5 rounded-lg font-semibold text-sm transition-all shadow-sm ${isValidEmail(email) && !loading
-            ? "bg-purple-600 hover:bg-purple-700 text-white shadow-purple-500/20 shadow-lg transform hover:-translate-y-0.5"
-            : "bg-gray-100 text-gray-400 cursor-not-allowed"
-            }`}
+          disabled={!isValidEmail(email)}
+          isLoading={loading}
+          className="w-full mt-2"
+          size="lg"
         >
-          {loading ? "Signing in..." : "Continue"}
-        </button>
+          Continue
+        </Button>
       </form>
 
-      <p className="text-center text-sm mt-6 text-gray-500">
-        No account?{" "}
-        <a
-          href="#"
-          onClick={(e) => { e.preventDefault(); router.push("/signup"); }}
-          className="text-purple-600 hover:text-purple-700 font-medium hover:underline transition-colors"
+      <p className="text-center text-xs mt-4 text-slate-600 dark:text-slate-400">
+        Don't have an account?{" "}
+        <Link
+          href="/signup"
+          className="text-primary-600 font-semibold hover:underline"
         >
           Sign Up
-        </a>
+        </Link>
       </p>
     </div>
   );

@@ -1,0 +1,8 @@
+﻿component/editor/ConfigurationSidebar.tsx(310,33): error TS2322: Type '{ children: string | Element; onClick: () => Promise<void>; disabled: boolean; size: "big"; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; onClick: () => void; size?: "big" | "small" | undefined; }'.
+  Property 'disabled' does not exist on type 'IntrinsicAttributes & { children: ReactNode; onClick: () => void; size?: "big" | "small" | undefined; }'.
+component/editor/ConfigurationSidebar.tsx(493,49): error TS2322: Type '{ children: Element; onClick: () => Promise<void>; disabled: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; onClick: () => void; size?: "big" | "small" | undefined; }'.
+  Property 'disabled' does not exist on type 'IntrinsicAttributes & { children: ReactNode; onClick: () => void; size?: "big" | "small" | undefined; }'.
+component/editor/ConfigurationSidebar.tsx(522,53): error TS2322: Type '{ children: string; className: string; onClick: () => void; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; onClick: () => void; size?: "big" | "small" | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & { children: ReactNode; onClick: () => void; size?: "big" | "small" | undefined; }'.
+component/editor/selectors/GoogleSheetSelector.tsx(174,21): error TS2322: Type '{ children: string; onClick: () => void; disabled: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: ReactNode; onClick: () => void; size?: "big" | "small" | undefined; }'.
+  Property 'disabled' does not exist on type 'IntrinsicAttributes & { children: ReactNode; onClick: () => void; size?: "big" | "small" | undefined; }'.

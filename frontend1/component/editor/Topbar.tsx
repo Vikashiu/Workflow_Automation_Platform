@@ -1,71 +1,89 @@
+"use client";
 
 import { useRouter } from "next/navigation";
-
-import { BACKEND_URL } from "@/app/config";
+import { Button } from "../ui/Button";
 import axios from "axios";
-
-// Fallback Icon if lucide not working
-const ChevronLeftIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-600">
-    <path d="m15 18-6-6 6-6" />
-  </svg>
-);
+import { BACKEND_URL } from "@/app/config";
+import { useState } from "react";
 
 export function TopBar({ handlePublish, zapName, setZapName }: {
   handlePublish: () => void;
   zapName: string;
-  setZapName: (name: string) => void;
+  setZapName: (val: string) => void;
 }) {
   const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  const handleConnectApp = async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await axios.get<{ url: string }>(`${BACKEND_URL}/auth`, {
+        headers: { 'Authorization': token }
+      });
+      window.location.href = res.data.url;
+    } catch (e) {
+      console.error(e);
+      alert("Failed to connect app. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <div className="h-16 bg-gradient-to-r from-white to-blue-50 border-b border-gray-200 flex items-center justify-between px-6 sticky top-0 z-40 w-full shadow-sm">
-      <div className="flex items-center gap-4">
-        <button
-          onClick={() => router.back()}
-          className="p-2 hover:bg-gray-100 rounded-lg transition-all hover:scale-110 active:scale-95"
-          title="Go back"
+    <div className="flex justify-between items-center bg-white dark:bg-slate-900 w-full px-4 py-3 border-b border-slate-200 dark:border-slate-800 shadow-sm z-30">
+      {/* Left: Back */}
+      <div className="flex items-center">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => router.push("/dashboard")}
+          leftIcon={
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+          }
+          className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
         >
-          <ChevronLeftIcon />
-        </button>
-        <div className="h-8 w-px bg-gray-200"></div>
-        <input
-          value={zapName}
-          onChange={(e) => setZapName(e.target.value)}
-          className="font-bold text-lg text-gray-900 border-2 border-transparent focus:border-purple-400 bg-transparent px-2 py-1 rounded-lg hover:bg-gray-50 focus:bg-white transition-all outline-none w-80 placeholder-gray-400"
-          placeholder="Untitled Zap"
-        />
+          Back
+        </Button>
       </div>
 
-      <div className="flex items-center gap-3">
-        <button
-          onClick={async () => {
-            try {
-              const res = await axios.get<any>(`${BACKEND_URL}/auth`, {
-                headers: {
-                  'Authorization': localStorage.getItem('token'),
-                }
-              });
-              window.location.href = res.data.url;
-            } catch (e) {
-              console.error(e);
-            }
-          }}
-          className="text-sm px-4 py-2.5 text-gray-700 hover:text-gray-900 font-semibold bg-white hover:bg-gray-50 rounded-lg transition-all border border-gray-200 hover:border-gray-300 hover:shadow-md active:scale-95"
-        >
-          <span className="flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.658 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
-            Connect Apps
-          </span>
+      {/* Center: Zap Name */}
+      <div className="flex items-center justify-center flex-1 max-w-lg mx-auto">
+        <input
+          type="text"
+          value={zapName}
+          onChange={(e) => setZapName(e.target.value)}
+          placeholder="Name your Zap..."
+          className="text-center font-semibold text-lg text-slate-800 dark:text-white bg-transparent border-b border-transparent hover:border-slate-300 focus:border-primary-500 focus:outline-none transition-all px-2 py-1 w-full max-w-[300px]"
+        />
+        <button className="ml-2 text-slate-400 hover:text-primary-500 transition-colors" title="Edit Name">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
         </button>
+      </div>
 
-        <button
-          onClick={handlePublish}
-          className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white text-sm font-bold px-6 py-2.5 rounded-lg shadow-lg transition-all hover:shadow-purple-400/50 active:scale-95 flex items-center gap-2"
+      {/* Right: Actions */}
+      <div className="flex items-center gap-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleConnectApp}
+          isLoading={loading}
+          className="hidden sm:flex"
+          leftIcon={<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="16" /><line x1="8" y1="12" x2="16" y2="12" /></svg>}
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+          Connect App
+        </Button>
+
+        <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 mx-1 hidden sm:block"></div>
+
+        <Button
+          onClick={handlePublish}
+          size="md"
+          variant="primary"
+          className="px-6 shadow-md hover:shadow-lg transition-all"
+        >
           Publish
-        </button>
+        </Button>
       </div>
     </div>
   );

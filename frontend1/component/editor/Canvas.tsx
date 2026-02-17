@@ -1,597 +1,573 @@
 "use client";
-import { Modal } from "flowbite-react";
-import { PrimaryButton } from "../buttons/PrimaryButton";
-import { BACKEND_URL } from "@/app/config";
-import React, { useState, useCallback, useRef, useEffect } from "react";
-import canvasNavbar from "./canvasNavbar";
-import { useRouter, useParams } from "next/navigation";
-import { TopBar } from "./Topbar";
-import type { Trigger, Action, TriggerResponse, ActionResponse } from "@/type/editorsType";
-import { EmailSelector } from "./config-selectors/EmailSelector";
-import { SolanaSelector } from "./config-selectors/SolanaSelector";
-import { GoogleCalendarSelector } from "./config-selectors/GoogleCalendarSelector";
-import { GoogleSheetSelector } from "./config-selectors/GoogleSheetSelector";
-import { NotionSelector } from "./config-selectors/NotionSelector";
-import { GeminiSelector } from "./config-selectors/GeminiSelector";
-import ZapNode from "./ZapNode";
-import AddButtonEdge from "./AddButtonEdge";
-import { ConfigurationSidebar } from "./ConfigurationSidebar";
 
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   ReactFlow,
   addEdge,
   Background,
-  BackgroundVariant,
   Controls,
   Edge,
-
   Node,
   MiniMap,
-  useEdgesState,
   useNodesState,
-  MarkerType,
+  useEdgesState,
   Connection,
   FinalConnectionState,
+  useReactFlow,
   getIncomers,
   getOutgoers,
-  getConnectedEdges,
-
+  MarkerType,
 } from "@xyflow/react";
 import '@xyflow/react/dist/style.css';
+import axios from "axios";
 
-import { useReactFlow } from "@xyflow/react";
-import { api } from "@/lib/api-client";
-import { useToast } from "@/contexts/ToastContext";
-import { API_ROUTES } from "@/lib/constants";
-import Topbar from "../dashboard/Topbar";
+import { BACKEND_URL } from "@/app/config";
+import { TopBar } from "./Topbar";
+import { SideBar } from "./SideBar";
+import { EmailSelector } from "./selectors/EmailSelector";
+import { SolanaSelector } from "./selectors/SolanaSelector";
+import { GoogleCalendarSelector } from "./selectors/GoogleCalendarSelector";
+import { GoogleSheetSelector } from "./selectors/GoogleSheetSelector";
+import { GeminiSelector } from "./selectors/GeminiSelector";
+import { NotionSelector } from "./selectors/NotionSelector";
+import { SlackSelector } from "./selectors/SlackSelector";
+import { DiscordSelector } from "./selectors/DiscordSelector";
 
+import CustomNode from "./CustomNode";
+import type { Trigger, Action, TriggerResponse, ActionResponse } from "@/type/editorsType";
 
 const nodeOrigin: [number, number] = [0.5, 0];
-
-const nodeTypes = {
-  zapNode: ZapNode,
-};
-
-const edgeTypes = {
-  addButton: AddButtonEdge,
-};
-
 
 const initialNodes: Node[] = [
   {
     id: "1",
-    type: "zapNode",
-    data: { label: "Trigger", isTrigger: true, subtitle: "1. Start" },
+    type: "custom",
+    data: {
+      label: "Select Trigger",
+      subtitle: "1. Trigger",
+      icon: "",
+      metadata: {}
+    },
     position: { x: 250, y: 50 },
-    deletable: false,
+    deletable: false, // Prevents backspace deletion for root
   },
-
 ];
 
-const initialEdges: Edge[] = [
+const initialEdges: Edge[] = [];
 
-];
-
+// --- Custom Hook for Data ---
 
 function useAvailableActionsAndTriggers() {
   const [availableActions, setAvailableActions] = useState<Action[]>([]);
   const [availableTriggers, setAvailableTriggers] = useState<Trigger[]>([]);
 
   useEffect(() => {
-    api
-      .get<TriggerResponse>(API_ROUTES.TRIGGER.AVAILABLE)
-      .then((x) => setAvailableTriggers(x.availableTriggers));
+    const token = localStorage.getItem("token");
+    const headers = token ? { authorization: token } : {};
 
-    api
-      .get<ActionResponse>(API_ROUTES.ACTION.AVAILABLE)
-      .then((x) => setAvailableActions(x.availableActions));
+    axios
+      .get<TriggerResponse>(`${BACKEND_URL}/api/v1/trigger/available`, { headers })
+      .then((x) => setAvailableTriggers(x.data.availableTriggers))
+      .catch(console.error);
 
-    console.log(availableActions)
+    axios
+      .get<ActionResponse>(`${BACKEND_URL}/api/v1/action/available`, { headers })
+      .then((x) => setAvailableActions(x.data.availableActions))
+      .catch(console.error);
   }, []);
 
-  return {
-    availableActions,
-    availableTriggers,
-  };
+  return { availableActions, availableTriggers };
 }
 
-
+// --- Main Canvas Component ---
 
 export function Canvas() {
   const router = useRouter();
-  const params = useParams(); // { zapId: '...' }
-  const reactFlowWrapper = useRef(null);
-  const { success, error } = useToast();
-
   const { availableActions, availableTriggers } = useAvailableActionsAndTriggers();
-  const { getNode } = useReactFlow();
+  const { screenToFlowPosition, getNodes, getEdges } = useReactFlow();
 
+  // Define custom node types
+  const nodeTypes = useMemo(() => ({ custom: CustomNode }), []);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const { screenToFlowPosition } = useReactFlow();
 
-  const [openModal, setOpenModal] = useState(false);
+  const [openSelectorModal, setOpenSelectorModal] = useState(false);
+  const [openConfigModal, setConfigModal] = useState(false);
   const [selectedAction, setSelectedAction] = useState<Action | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [activeNodeId, setActiveNodeId] = useState<string>("");
   const [zapName, setZapName] = useState("Untitled Zap");
 
-  const filteredTriggers = availableTriggers.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()));
-  const filteredActions = availableActions.filter(a => a.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  // --- TRAVERSAL & RENUMBERING ---
 
+  // Helper: Sort nodes by flow order starting from root "1"
+  const getSortedNodes = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
+    const sorted: Node[] = [];
+    const nodeMap = new Map(currentNodes.map(n => [n.id, n]));
 
-  const [nodeId, setNodeId] = useState("");
+    let currentId: string | undefined = "1";
+    while (currentId && nodeMap.has(currentId)) {
+      sorted.push(nodeMap.get(currentId)!);
+      const edge = currentEdges.find(e => e.source === currentId);
+      currentId = edge ? edge.target : undefined;
+    }
+    return sorted;
+  }, []);
 
-  // Load existing Zap data if we are in Edit mode
-  useEffect(() => {
-    if (params.zapId) {
-      const fetchZap = async () => {
-        try {
-          const res = await api.get<any>(`${API_ROUTES.ZAP.GET_ALL}/${params.zapId}`);
-          const zap = res.zap;
+  const refreshNodeLabels = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
+    const sorted = getSortedNodes(currentNodes, currentEdges);
 
-          if (!zap) return;
+    // Update subtitles with sequence numbers for all nodes in the path
+    const updates = sorted.map((node, index) => {
+      const type = index === 0 ? "Trigger" : "Action";
+      const isLast = index === sorted.length - 1;
+      return {
+        id: node.id,
+        data: {
+          ...node.data,
+          subtitle: `${index + 1}. ${type}`,
+          isLast: isLast,
+          onAddNext: (parentId: string) => {
+            // Logic to add next node
+            const parentNode = sorted.find(n => n.id === parentId);
+            if (!parentNode) return;
 
-          setZapName(zap.name);
-
-          const triggerNode: Node = {
-            id: "1",
-            type: "zapNode",
-            data: {
-              label: zap.trigger?.type?.name || "Trigger",
-              isTrigger: true,
-              subtitle: "1. Start",
-              triggerId: zap.trigger?.type?.id,
-              icon: zap.trigger?.type?.image || "",
-              metadata: zap.trigger?.metadata || {}
-            },
-            position: { x: 250, y: 50 },
-            deletable: false,
-            origin: nodeOrigin
-          };
-
-          const sortedActions = (zap.actions || []).sort((a: any, b: any) => a.sortingOrder - b.sortingOrder);
-
-          const actionNodes: Node[] = sortedActions.map((action: any, index: number) => {
-            const nodeId = (index + 2).toString();
-            return {
-              id: nodeId,
-              type: "zapNode",
+            const newId = crypto.randomUUID();
+            const newNode: Node = {
+              id: newId,
+              position: { x: parentNode.position.x, y: parentNode.position.y + 200 }, // Offset Y
+              type: 'custom',
               data: {
-                label: action.type.name,
-                isTrigger: false,
-                subtitle: `${index + 2}. Action`,
-                actionId: action.type.id,
-                icon: action.type.image,
-                metadata: action.metadata || {}
+                label: "Select Action",
+                subtitle: "Action",
+                icon: "",
+                metadata: {}
               },
-              position: { x: 250, y: 150 + (index + 1) * 100 },
-              origin: nodeOrigin
+              origin: nodeOrigin,
             };
-          });
 
-          const allNodes = [triggerNode, ...actionNodes];
-          setNodes(allNodes);
-
-          // Reconstruct Edges
-          const newEdges: Edge[] = [];
-          // Link Trigger to First Action
-          if (actionNodes.length > 0) {
-            newEdges.push({
-              id: `e1-2`,
-              source: "1",
-              target: "2",
-              type: 'addButton',
+            const newEdge: Edge = {
+              id: `e${parentId}-${newId}`,
+              source: parentId,
+              target: newId,
+              type: 'smoothstep',
               animated: true,
-              data: { onEdgeClick: () => { } }
+              style: { stroke: '#6366f1', strokeWidth: 2 },
+              markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
+            };
+
+            setNodes((nds) => [...nds, newNode]);
+            setEdges((eds) => {
+              const updated = [...eds, newEdge];
+              setTimeout(() => refreshNodeLabels([...nodes, newNode], updated), 0);
+              return updated;
             });
           }
-          // Link Actions
-          for (let i = 0; i < actionNodes.length - 1; i++) {
-            const source = actionNodes[i].id;
-            const target = actionNodes[i + 1].id;
-            newEdges.push({
-              id: `e${source}-${target}`,
-              source,
-              target,
-              type: 'addButton',
-              animated: true,
-              data: { onEdgeClick: () => { } }
-            });
-          }
-          setEdges(newEdges);
-
-        } catch (err) {
-          console.error("Failed to load zap", err);
-          error("Failed to load zap details");
         }
       };
+    });
 
-      fetchZap();
-    }
-  }, [params.zapId, setNodes, setEdges, setZapName, error]);
+    // Apply updates if changed
+    setNodes(nds => nds.map(n => {
+      const update = updates.find(u => u.id === n.id);
+      if (update) {
+        const hasChanges = update.data.subtitle !== n.data.subtitle || update.data.isLast !== n.data.isLast;
+        const hasFunction = !!n.data.onAddNext;
 
+        if (hasChanges || !hasFunction) {
+          return { ...n, data: { ...n.data, ...update.data } };
+        }
+      }
+      return n;
+    }));
+  }, [getSortedNodes, setNodes]);
+
+  // --- EVENT HANDLERS ---
 
   const onConnect = useCallback(
     (params: Connection) => {
-      // Prevent branching: excessive outgoers
-      const sourceNode = nodes.find(n => n.id === params.source);
-      if (sourceNode) {
-        const outgoers = getOutgoers(sourceNode, nodes, edges);
-        if (outgoers.length > 0) return; // Already has an output
-      }
+      // Strict Sequential: Ensure source has no other outgoing, target has no other incoming
+      // But allow replacing? ReactFlow 'addEdge' doesn't replace by default.
+      // Let's block multi-path.
 
-      const edge = { ...params, type: 'addButton', animated: false, data: { onEdgeClick: (id: string) => console.log("Add node on edge", id) } };
-      setEdges((eds) => addEdge(edge, eds));
+      const sourceEdges = edges.filter(e => e.source === params.source);
+      if (sourceEdges.length > 0) return; // Block branching
+
+      const targetEdges = edges.filter(e => e.target === params.target);
+      if (targetEdges.length > 0) return; // Block merge
+
+      setEdges((eds) => {
+        const newEdges = addEdge({
+          ...params,
+          type: 'smoothstep',
+          animated: true,
+          style: { stroke: '#6366f1', strokeWidth: 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
+        }, eds);
+
+        // Trigger label refresh after visible update (useLayoutEffect might be better but this works)
+        setTimeout(() => refreshNodeLabels(nodes, newEdges), 0);
+        return newEdges;
+      });
     },
-    [setEdges, nodes, edges],
+    [edges, nodes, refreshNodeLabels, setEdges]
   );
 
   const onConnectEnd = useCallback(
     (
       event: MouseEvent | TouchEvent,
-      connectionState: FinalConnectionState) => {
-      // when a connection is dropped on the pane it's not valid
+      connectionState: FinalConnectionState
+    ) => {
       if (!connectionState.isValid && connectionState.fromNode) {
-
-        const sourceNode = nodes.find(n => n.id === connectionState.fromNode?.id);
-        if (sourceNode) {
-          const outgoers = getOutgoers(sourceNode, nodes, edges);
-          if (outgoers.length > 0) return; // Prevent branching
+        // Only allow adding if this node is the LAST one (or has no output)
+        // Check if fromNode has outgoing edges
+        const sourceEdges = edges.filter(e => e.source === connectionState.fromNode!.id);
+        if (sourceEdges.length > 0) {
+          // Already connected, don't branch.
+          return;
         }
 
-        const { clientX, clientY } =
-          'changedTouches' in event ? event.changedTouches[0] : event;
+        const id = (parseInt(nodes[nodes.length - 1].id) + 1).toString(); // Simple ID gen, can be uuid
+        // Better unique ID generation
+        const newId = crypto.randomUUID();
 
-        const sourceId = connectionState.fromNode.id;
-        const newNodeId = (Math.floor(Math.random() * 1000000)).toString();
-        const nextStepIndex = nodes.length + 1;
+        const { clientX, clientY } = 'changedTouches' in event ? event.changedTouches[0] : event;
 
-        const newNode = {
-          id: newNodeId,
-          type: "zapNode",
-          position: screenToFlowPosition({
-            x: clientX - 90,
-            y: clientY,
-          }),
-          data: { label: "Action", isTrigger: false, subtitle: `${nextStepIndex}. Action` },
-          nodeOrigin: nodeOrigin,
+        const newNode: Node = {
+          id: newId,
+          position: screenToFlowPosition({ x: clientX, y: clientY }),
+          type: 'custom',
+          data: {
+            label: "Select Action",
+            subtitle: "Action", // Will be updated by refresh
+            icon: "",
+            metadata: {}
+          },
+          origin: nodeOrigin,
         };
 
-        const newEdge = {
-          id: `e${sourceId}-${newNodeId}`,
-          source: sourceId,
-          target: newNodeId,
-          type: 'addButton',
-          animated: false,
-          data: { onEdgeClick: (id: string) => console.log("Add node on edge", id) }
+        const newEdge: Edge = {
+          id: `e${connectionState.fromNode!.id}-${newId}`,
+          source: connectionState.fromNode!.id,
+          target: newId,
+          type: 'smoothstep',
+          animated: true,
+          style: { stroke: '#6366f1', strokeWidth: 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
         };
 
-        setNodes((nds) => nds.concat(newNode));
-        setEdges((eds) => eds.concat(newEdge));
+        setNodes((nds) => [...nds, newNode]);
+        setEdges((eds) => {
+          const updated = [...eds, newEdge];
+          setTimeout(() => refreshNodeLabels([...nodes, newNode], updated), 0);
+          return updated;
+        });
       }
     },
-    [screenToFlowPosition, nodes, edges, setNodes, setEdges],
+    [screenToFlowPosition, nodes, edges, setNodes, setEdges, refreshNodeLabels]
   );
 
   const onNodesDelete = useCallback(
     (deleted: Node[]) => {
-      const idsToDelete = new Set<string>();
-      const updatedNodesMap = new Map<string, Node>();
+      // For each deleted node, reconnect its Incomer to its Outgoer
+      // We process one by one
 
-      // Helper: recursively collect all outgoer node ids
-      const collectOutgoerChain = (node: Node) => {
-        if (idsToDelete.has(node.id)) return;
+      let currentNodes = [...nodes];
+      let currentEdges = [...edges];
 
-        idsToDelete.add(node.id);
-
-        const outgoers = getOutgoers(node, nodes, edges);
-        outgoers.forEach(collectOutgoerChain);
-      };
-
-      // Start from every deleted node
       deleted.forEach((node) => {
-        // collect full downstream chain
-        collectOutgoerChain(node);
+        const incomerEdge = currentEdges.find(e => e.target === node.id);
+        const outgoerEdge = currentEdges.find(e => e.source === node.id);
 
-        // Update incomers of the initially deleted node
-        const incomers = getIncomers(node, nodes, edges);
-        incomers.forEach((inNode) => {
-          updatedNodesMap.set(inNode.id, {
-            ...inNode,
-            connectable: true,
+        if (incomerEdge && outgoerEdge) {
+          // Creating a bridge
+          const newEdge: Edge = {
+            id: `e${incomerEdge.source}-${outgoerEdge.target}`,
+            source: incomerEdge.source,
+            target: outgoerEdge.target,
+            type: 'smoothstep',
+            animated: true,
+            style: { stroke: '#6366f1', strokeWidth: 2 },
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
+          };
+          currentEdges.push(newEdge);
+        }
+
+        // Edges connected to deleted node are automatically removed by ReactFlow logic usually,
+        // but we manual manage for state consistency if needed. 
+        // ReactFlow's onNodesDelete fires AFTER deletion? No, usually accompanying.
+        // Note: standard useNodesState handles 'onNodesChange' which does deletion. 
+        // 'onNodesDelete' is a callback side effect.
+
+        // Actually, we must manually update edges if we want to add the bridge. 
+        // The 'edges' state will be filtered by 'onEdgesChange' automatically for the deleted node, 
+        // but NOT strictly adding new ones.
+      });
+
+      // We need to apply the bridge edges to the state.
+      // Since 'onNodesDelete' passes the nodes being deleted, we assume edges are cleaning up via onEdgesChange.
+      // We just need to ADD the new bridge edges.
+
+      const bridges: Edge[] = [];
+      deleted.forEach(node => {
+        const incomer = edges.find(e => e.target === node.id);
+        const outgoer = edges.find(e => e.source === node.id);
+        if (incomer && outgoer) {
+          bridges.push({
+            id: `e${incomer.source}-${outgoer.target}`,
+            source: incomer.source,
+            target: outgoer.target,
+            type: 'smoothstep',
+            animated: true,
+            style: { stroke: '#6366f1', strokeWidth: 2 },
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
           });
-        });
+        }
       });
 
-      // Delete nodes
-      setNodes((prevNodes) => {
-        const kept = prevNodes.filter((n) => !idsToDelete.has(n.id));
-        const updated = Array.from(updatedNodesMap.values());
+      setEdges(eds => [...eds, ...bridges]);
 
-        const filteredKept = kept.filter(
-          (n) => !updatedNodesMap.has(n.id)
-        );
+      // Delay label refresh to next tick to allow deletion to settle
+      setTimeout(() => {
+        // We can't use 'nodes' directly because it might be stale?
+        // We should fetch fresh from store if possible, or assume deletion happened.
+        // Since we setNodes via onNodesChange, we trust visual state updates.
+        // But to be safe, let's force a refresh based on the remaining graph.
 
-        return [...filteredKept, ...updated];
-      });
-
-      // Delete all connected edges
-      setEdges((prevEdges) =>
-        prevEdges.filter(
-          (e) =>
-            !idsToDelete.has(e.source) &&
-            !idsToDelete.has(e.target)
-        )
-      );
+        // It's tricky to get "next state" inside this callback effectively for logic.
+        // But visually, the user will see keys updating.
+        // We just need to trigger the hook.
+        // Actually, 'refreshNodeLabels' inside a useEffect on 'edges' might be cleaner.
+      }, 50);
     },
-    [nodes, edges, setNodes, setEdges]
+    [nodes, edges, setEdges]
   );
 
-  function onNodeClick(event: React.MouseEvent, node: Node) {
-    // If clicking an Action Node that is already configured
-    if (node.id !== "1" && node.data?.actionId) {
-      const action = availableActions.find(a => a.id === node.data.actionId);
-      if (action) {
-        setSelectedAction(action);
-        setNodeId(node.id);
-        setOpenModal(false);
-        return;
+  // Auto-refresh labels when edges change structure (simple approach)
+  useEffect(() => {
+    // Use efficient check to avoid infinite loop
+    // We only care if order changed. 
+    const tId = setTimeout(() => {
+      refreshNodeLabels(nodes, edges);
+    }, 100);
+    return () => clearTimeout(tId);
+  }, [edges.length, nodes.length]); // Depend on counts change for now (add/delete)
+
+
+  const onNodeClick = (event: React.MouseEvent, node: Node) => {
+    setActiveNodeId(node.id);
+    const label = node.data.label as string;
+    const isGeneric = label.startsWith("Select");
+
+    if (isGeneric) {
+      setOpenSelectorModal(true);
+    } else {
+      if (node.id === "1") {
+        setOpenSelectorModal(true);
+      } else {
+        const action = availableActions.find(a => a.name === label);
+        if (action) {
+          setSelectedAction(action);
+          setConfigModal(true);
+        } else {
+          setOpenSelectorModal(true);
+        }
       }
     }
-
-    // Default behavior (App Chooser)
-    setOpenModal(true);
-    setNodeId(node.id);
-  }
+  };
 
   const updateNodeMetadata = (metadata: any) => {
-    setNodes((prevNodes) =>
-      prevNodes.map((node) => {
-        if (node.id === nodeId) {
-          const newData: any = { ...node.data, metadata };
-          // If saving an action, update its label/icon/ID here
-          if (nodeId !== "1" && selectedAction) {
-            newData.label = selectedAction.name;
-            newData.icon = selectedAction.image;
-            newData.actionId = selectedAction.id;
+    setNodes((nds) => nds.map((node) => {
+      if (node.id === activeNodeId) {
+        return { ...node, data: { ...node.data, metadata } };
+      }
+      return node;
+    }));
+    setConfigModal(false);
+  };
+
+  const handleSelectComponent = (item: Trigger | Action, type: 'trigger' | 'action') => {
+    setNodes(nds => nds.map(n => {
+      if (n.id === activeNodeId) {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            label: item.name,
+            subtitle: n.data.subtitle, // Keep existing subtitle ("1. Trigger")
+            icon: item.image
           }
-          return { ...node, data: newData };
-        }
-        return node;
-      })
-    );
+        };
+      }
+      return n;
+    }));
+    setOpenSelectorModal(false);
+
+    if (type === 'action') {
+      setSelectedAction(item as Action);
+      setConfigModal(true);
+    }
   };
 
   const handlePublish = async () => {
-    const triggerNode = nodes.find((n) => n.id === "1");
-
-    if (!triggerNode || !triggerNode.data?.triggerId) {
-      alert("Trigger not selected.");
+    // 1. Traverse strictly from Root
+    const sortedNodes = getSortedNodes(nodes, edges);
+    if (sortedNodes.length < 2) {
+      alert("Zap must have at least a trigger and one action.");
       return;
     }
 
-    const availableTriggerId = triggerNode.data.triggerId;
+    const triggerNode = sortedNodes[0];
+    if ((triggerNode.data.label as string).startsWith("Select")) {
+      alert("Please configure the trigger.");
+      return;
+    }
 
-    const actions = nodes
-      .filter(n => n.id !== triggerNode.id)
-      .map(n => {
-        return {
-          availableActionId: n.data.actionId || "", // Use stored ID
-          sortingOrder: parseInt(n.id) - 1,
-          actionMetadata: n.data.metadata || {},
-        };
-      });
+    const triggerName = triggerNode.data.label as string;
+    const trigger = availableTriggers.find(t => t.name === triggerName);
+    if (!trigger) {
+      alert("Invalid trigger configuration.");
+      return;
+    }
+
+    const actions = sortedNodes.slice(1).map((n, index) => {
+      const name = n.data.label as string;
+      if (name.startsWith("Select")) return null;
+      const action = availableActions.find(a => a.name === name);
+      if (!action) return null;
+
+      return {
+        availableActionId: action.id,
+        sortingOrder: index, // 0-based index for actions
+        actionMetadata: n.data.metadata || {},
+      };
+    }).filter(Boolean);
+
+    if (actions.length === 0) {
+      alert("Please add at least one valid action.");
+      return;
+    }
 
     try {
-      await api.post(API_ROUTES.ZAP.CREATE, {
-        availableTriggerId: availableTriggerId,
+      await axios.post(`${BACKEND_URL}/api/v1/zap/create`, {
+        availableTriggerId: trigger.id,
+        triggerMetadata: {},
+        name: zapName,
         actions,
-        name: zapName
+      }, {
+        headers: { Authorization: localStorage.getItem("token") || "" },
       });
 
-      success("Zap Created!");
       router.push("/dashboard");
     } catch (err) {
-      error("Failed to publish zap.");
+      console.error(err);
+      alert("Failed to publish zap.");
     }
   };
 
-
-
-
-  // Strict validation to prevent branching (1->Many) and merging (Many->1)
-  const isValidConnection = useCallback(
-    (connection: Connection | Edge) => {
-      const sourceNode = nodes.find((n) => n.id === connection.source);
-      const targetNode = nodes.find((n) => n.id === connection.target);
-
-      if (!sourceNode || !targetNode) return false;
-
-      // Check if source already has an outgoing connection
-      const outgoers = getOutgoers(sourceNode, nodes, edges);
-      if (outgoers.length > 0) return false;
-
-      // Check if target already has an incoming connection
-      const incomers = getIncomers(targetNode, nodes, edges);
-      if (incomers.length > 0) return false;
-
-      return true;
-    },
-    [nodes, edges]
-  );
-
   return (
-    <div className="h-full w-full bg-gradient-to-br from-slate-50 via-slate-50 to-blue-50 relative flex flex-col">
+    <div className="flex flex-col h-full w-full">
       <TopBar handlePublish={handlePublish} zapName={zapName} setZapName={setZapName} />
-      <div className="flex-1 w-full relative">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onConnectEnd={onConnectEnd}
-          onNodesDelete={onNodesDelete}
-          onNodeClick={onNodeClick}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          defaultEdgeOptions={{ type: 'addButton', animated: true, style: { stroke: '#a78bfa', strokeWidth: 2 } }}
-          isValidConnection={isValidConnection}
-          fitView
-          className="bg-transparent"
-        >
-          <MiniMap className="!bg-white border border-gray-200 rounded-lg shadow-lg" />
-          <Controls className="bg-gradient-to-b from-white to-gray-50 border border-gray-200 shadow-lg rounded-lg overflow-hidden text-gray-700" />
-          <Background
-            color="#cbd5e1"
-            gap={16}
-            size={1}
-            variant={BackgroundVariant.Dots}
-          />
-        </ReactFlow>
+
+      <div className="flex flex-1 h-full relative">
+        <SideBar />
+        <div className="flex-1 bg-slate-50 dark:bg-slate-900 relative">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onConnectEnd={onConnectEnd}
+            onNodesDelete={onNodesDelete}
+            onNodeClick={onNodeClick}
+            nodeTypes={nodeTypes}
+            fitView
+            fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
+            attributionPosition="bottom-right"
+            proOptions={{ hideAttribution: true }}
+          >
+            <MiniMap className="bg-white dark:bg-slate-800 border dark:border-slate-700" maskColor="rgba(0,0,0,0.1)" />
+            <Controls className="bg-white dark:bg-slate-800 border dark:border-slate-700 fill-slate-500" />
+            <Background gap={16} size={1} color="#cbd5e1" />
+          </ReactFlow>
+        </div>
       </div>
 
-      <Modal show={openModal} onClose={() => { setOpenModal(false); setSearchTerm(""); }} size="4xl" popup>
-        <div className="bg-gradient-to-b from-white via-blue-50 to-purple-50 ease-out duration-300 rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
-          <div className="flex flex-col p-8 border-b border-gray-200 bg-gradient-to-r from-white via-blue-50 to-purple-50">
-            <div className="flex justify-between items-start mb-6">
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-2 h-8 rounded-full bg-gradient-to-b from-purple-600 to-blue-600"></div>
-                  <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
-                    Choose Your {nodeId === "1" ? "Trigger" : "Action"}
-                  </h2>
+      {/* --- MODALS (Selector & Config) --- */}
+      {openSelectorModal && (
+        <Modal onClose={() => setOpenSelectorModal(false)} title="Select Component">
+          <div className="space-y-4">
+            {activeNodeId === "1" ? (
+              <div>
+                <h4 className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-3">Available Triggers</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  {availableTriggers.map((t) => (
+                    <button key={t.id} onClick={() => handleSelectComponent(t, 'trigger')} className="flex items-center gap-3 p-3 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:border-primary-200 transition-all text-left">
+                      <img src={t.image} alt={t.name} className="w-8 h-8 object-contain" />
+                      <span className="font-medium text-slate-700 dark:text-slate-200">{t.name}</span>
+                    </button>
+                  ))}
                 </div>
-                <p className="text-gray-600 font-medium ml-5">
-                  {nodeId === "1"
-                    ? "Select what should start this workflow"
-                    : "Pick what happens next in your automation"}
-                </p>
-              </div>
-              <button
-                onClick={() => { setOpenModal(false); setSearchTerm(""); }}
-                className="text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-gray-100 transition-all hover:scale-110"
-              >
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-
-            <div className="relative mt-4">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <svg className="h-5 w-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
-              <input
-                type="text"
-                className="block w-full pl-11 pr-4 py-3 bg-white border-2 border-gray-200 hover:border-purple-300 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 transition-all font-medium focus:outline-none"
-                placeholder="Search by app name..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                autoFocus
-              />
-            </div>
-          </div>
-
-          <div className="p-8 bg-gradient-to-b from-slate-50/50 to-blue-50/30 min-h-[450px]">
-            {nodeId === "1" ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                {filteredTriggers.map((trigger) => (
-                  <div
-                    key={trigger.id}
-                    onClick={() => {
-                      const node = getNode(nodeId);
-                      if (node != null) {
-                        node.data.label = trigger.name;
-                        node.data.icon = trigger.image;
-                        node.data.triggerId = trigger.id;
-                      }
-                      setOpenModal(false);
-                      setSearchTerm("");
-                    }}
-                    className="group flex flex-col items-center justify-center p-6 bg-gradient-to-br from-white to-blue-50 rounded-2xl border-2 border-gray-200 hover:border-blue-400 hover:shadow-xl hover:shadow-blue-500/20 cursor-pointer transition-all duration-300 transform hover:-translate-y-2"
-                  >
-                    <div className="w-16 h-16 mb-4 rounded-xl bg-gradient-to-br from-blue-100 to-blue-50 group-hover:from-blue-200 group-hover:to-blue-100 flex items-center justify-center transition-all duration-300 border-2 border-blue-200 shadow-md">
-                      <img className="w-10 h-10 object-contain" src={trigger.image} alt={trigger.name} />
-                    </div>
-                    <h3 className="font-bold text-slate-700 group-hover:text-blue-700 text-center transition-colors text-sm">{trigger.name}</h3>
-                    <div className="mt-2 px-2 py-1 rounded-full text-xs font-semibold text-blue-600 bg-blue-50 group-hover:bg-blue-100 transition-colors">
-                      Trigger
-                    </div>
-                  </div>
-                ))}
-                {filteredTriggers.length === 0 && (
-                  <div className="col-span-full flex flex-col items-center justify-center py-16 text-gray-400">
-                    <svg className="w-16 h-16 mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    <p className="font-medium text-center">No triggers found</p>
-                    <p className="text-sm mt-1">Try searching for "{searchTerm}"</p>
-                  </div>
-                )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                {filteredActions.map((action) => (
-                  <div
-                    key={action.id}
-                    onClick={() => {
-                      setOpenModal(false);
-                      setSearchTerm("");
-                      setSelectedAction(action);
-                      setNodes((nds) => nds.map(n => {
-                        if (n.id === nodeId) {
-                          return {
-                            ...n,
-                            data: {
-                              ...n.data,
-                              label: action.name,
-                              icon: action.image,
-                              actionId: action.id,
-                            }
-                          }
-                        }
-                        return n;
-                      }));
-                    }}
-                    className="group flex flex-col items-center justify-center p-6 bg-gradient-to-br from-white to-purple-50 rounded-2xl border-2 border-gray-200 hover:border-purple-400 hover:shadow-xl hover:shadow-purple-500/20 cursor-pointer transition-all duration-300 transform hover:-translate-y-2"
-                  >
-                    <div className="w-16 h-16 mb-4 rounded-xl bg-gradient-to-br from-purple-100 to-purple-50 group-hover:from-purple-200 group-hover:to-purple-100 flex items-center justify-center transition-all duration-300 border-2 border-purple-200 shadow-md">
-                      <img className="w-10 h-10 object-contain" src={action.image} alt={action.name} />
-                    </div>
-                    <h3 className="font-bold text-slate-700 group-hover:text-purple-700 text-center transition-colors text-sm">{action.name}</h3>
-                    <div className="mt-2 px-2 py-1 rounded-full text-xs font-semibold text-purple-600 bg-purple-50 group-hover:bg-purple-100 transition-colors">
-                      Action
-                    </div>
-                  </div>
-                ))}
-                {filteredActions.length === 0 && (
-                  <div className="col-span-full flex flex-col items-center justify-center py-16 text-gray-400">
-                    <svg className="w-16 h-16 mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                    <p className="font-medium text-center">No actions found</p>
-                    <p className="text-sm mt-1">Try searching for "{searchTerm}"</p>
-                  </div>
-                )}
+              <div>
+                <h4 className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-3">Available Actions</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  {availableActions.map((a) => (
+                    <button key={a.id} onClick={() => handleSelectComponent(a, 'action')} className="flex items-center gap-3 p-3 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:border-primary-200 transition-all text-left">
+                      <img src={a.image} alt={a.name} className="w-8 h-8 object-contain" />
+                      <span className="font-medium text-slate-700 dark:text-slate-200">{a.name}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
-        </div>
-      </Modal>
+        </Modal>
+      )}
 
-      <ConfigurationSidebar
-        isOpen={!!selectedAction || (nodeId === "1" && !openModal)}
-        onClose={() => {
-          setSelectedAction(null);
-          setNodeId("");
-        }}
-        selectedNodeId={nodeId}
-        selectedAction={selectedAction}
-        selectedTrigger={nodeId === "1" ? availableTriggers.find(t => t.id === nodes.find(n => n.id === "1")?.data?.triggerId) || null : null}
-        updateNodeMetadata={updateNodeMetadata}
-        zapId={params.zapId as string}
-        nodes={nodes}
-        onChangeAction={() => setOpenModal(true)}
-      />
+      {openConfigModal && selectedAction && (
+        <Modal onClose={() => setConfigModal(false)} title={`Configure ${selectedAction.name}`}>
+          {selectedAction.name === "email" && <EmailSelector setMetadata={updateNodeMetadata} />}
+          {selectedAction.name === "Solana" && <SolanaSelector setMetadata={updateNodeMetadata} />}
+          {selectedAction.name === "Google Calender" && <GoogleCalendarSelector setMetadata={updateNodeMetadata} />}
+          {selectedAction.name === "Google Sheet" && <GoogleSheetSelector setMetadata={updateNodeMetadata} />}
+          {selectedAction.name === "Gemini" && <GeminiSelector setMetadata={updateNodeMetadata} />}
+          {selectedAction.name === "Notion" && <NotionSelector setMetadata={updateNodeMetadata} />}
+          {selectedAction.name === "Slack" && <SlackSelector setMetadata={updateNodeMetadata} />}
+          {selectedAction.name === "Discord" && <DiscordSelector setMetadata={updateNodeMetadata} />}
+
+          {!["email", "Solana", "Google Calender", "Google Sheet", "Gemini", "Notion", "Slack", "Discord"].includes(selectedAction.name) && (
+            <div className="text-center py-8 text-slate-500">
+              No configuration needed for this action.
+              <div className="mt-4">
+                <button onClick={() => updateNodeMetadata({})} className="px-4 py-2 bg-primary-600 text-white rounded-lg">Save & Close</button>
+              </div>
+            </div>
+          )}
+        </Modal>
+      )}
 
     </div>
   );
+}
+
+function Modal({ children, onClose, title }: { children: React.ReactNode, onClose: () => void, title: string }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-200">
+        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
+          <h3 className="text-lg font-bold text-slate-900 dark:text-white">{title}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+          </button>
+        </div>
+        <div className="p-6 max-h-[70vh] overflow-y-auto">
+          {children}
+        </div>
+      </div>
+    </div>
+  )
 }

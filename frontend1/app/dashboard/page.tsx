@@ -1,13 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react";
+import axios from "axios";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { BACKEND_URL, HOOKS_URL } from "../config";
-import { api } from "@/lib/api-client";
-import { API_ROUTES } from "@/lib/constants";
-import { useToast } from "@/contexts/ToastContext";
-import type { Zap, GetAllZapResponse } from "@/lib/types";
-import { copyToClipboard } from "@/lib/utils";
+import { Button } from "@/component/ui/Button";
 
 // --- Helper Functions & Icons ---
 
@@ -21,71 +19,200 @@ const formatDate = (dateString: string) => {
 };
 
 const CopyIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="inline-block ml-2 text-gray-400 hover:text-gray-600 cursor-pointer">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-400 group-hover:text-primary-600 transition-colors">
         <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
         <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
     </svg>
 );
 
-const MagicWandIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-purple-500">
-        <path d="M9.5 2.5a1.5 1.5 0 0 1 3 0M6 2.5a1.5 1.5 0 0 1 3 0M2.5 6a1.5 1.5 0 0 1 0 3M2.5 15a1.5 1.5 0 0 1 0 3M6 21.5a1.5 1.5 0 0 1 3 0M15 21.5a1.5 1.5 0 0 1 3 0M21.5 15a1.5 1.5 0 0 1 0 3M21.5 6a1.5 1.5 0 0 1 0 3M15 2.5a1.5 1.5 0 0 1 3 0M11 12c0 2.5-2 4.5-4.5 4.5S2 14.5 2 12s2-4.5 4.5-4.5S11 9.5 11 12z" />
-        <path d="m13 12 8.5 8.5" />
-        <path d="m13 12-8.5 8.5" />
+const CheckIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
+        <polyline points="20 6 9 17 4 12" />
     </svg>
 );
+
+const ZapIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary-600">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+);
+
+const ArrowRightIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300">
+        <path d="M5 12h14" />
+        <path d="m12 5 7 7-7 7" />
+    </svg>
+);
+
+// --- Type Definitions ---
+
+type Zap = {
+    id: string;
+    name?: string; // Optional user-defined name
+    TriggerId: string;
+    userId: number;
+    createdAt: string;
+    actions: {
+        id: string;
+        zapId: string;
+        ActionId: string;
+        metadata: Record<string, any>;
+        type: {
+            id: string;
+            name: string;
+            image: string;
+        };
+    }[];
+    trigger: {
+        id: string;
+        zapId: string;
+        TriggerId: string;
+        metadata: Record<string, any>;
+        type: {
+            id: string;
+            name: string;
+            image: string;
+        };
+    };
+};
+
+type GetAllZapResponse = {
+    zaps: Zap[];
+};
 
 // --- Custom Hook for Data Fetching ---
 
 function useZaps() {
     const [loading, setLoading] = useState(true);
     const [zaps, setZaps] = useState<Zap[]>([]);
-    const { error } = useToast();
+    const [error, setError] = useState<string | null>(null);
 
-    useEffect(() => {
-        const fetchZaps = async () => {
-            try {
-                const res = await api.get<GetAllZapResponse>(API_ROUTES.ZAP.GET_ALL);
-                setZaps(res.zaps);
-            } catch (err) {
-                console.error("Failed to fetch zaps:", err);
-                error("Failed to load your Zaps");
-            } finally {
-                setLoading(false);
-            }
+    const fetchZaps = useCallback(async () => {
+        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+        if (!token) {
+            setLoading(false);
+            setError("auth");
+            return;
         }
-
-        fetchZaps();
+        setError(null);
+        setLoading(true);
+        try {
+            const res = await axios.get<GetAllZapResponse>(`${BACKEND_URL}/api/v1/zap/user`, {
+                headers: { authorization: token }
+            });
+            setZaps(Array.isArray(res.data?.zaps) ? res.data.zaps : []);
+        } catch (err: unknown) {
+            const res = err && typeof err === "object" && "response" in err ? (err as { response?: { status?: number } }).response : undefined;
+            const status = res?.status ?? null;
+            if (status === 401 || status === 403) {
+                if (typeof window !== "undefined") localStorage.removeItem("token");
+                setError("auth");
+            } else {
+                setError("Failed to load zaps. Please try again.");
+            }
+            setZaps([]);
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
-    return { loading, zaps, setZaps };
+    useEffect(() => {
+        fetchZaps();
+    }, [fetchZaps]);
+
+    return { loading, zaps, setZaps, error, retry: fetchZaps };
+}
+
+// --- Dashboard Navbar (authenticated) ---
+
+function DashboardNavbar() {
+    const router = useRouter();
+    const handleLogout = () => {
+        localStorage.removeItem("token");
+        router.replace("/signin");
+    };
+    return (
+        <nav className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 shadow-sm">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex justify-between items-center h-16">
+                    <div className="flex items-center gap-8">
+                        <Link href="/" className="flex items-center gap-2 group">
+                            <div className="p-1.5 bg-primary-100 dark:bg-primary-900/30 rounded-lg group-hover:bg-primary-200 transition-colors">
+                                <ZapIcon />
+                            </div>
+                            <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary-600 to-indigo-600">
+                                ZapClone
+                            </span>
+                        </Link>
+                        <div className="hidden md:flex gap-6">
+                            <span className="text-sm font-medium text-slate-900 dark:text-white border-b-2 border-primary-600 px-1 py-5">
+                                Dashboard
+                            </span>
+                            <Link href="/" className="text-sm font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white px-1 py-5 transition-colors">
+                                Marketplace
+                            </Link>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <Button variant="ghost" size="sm" onClick={handleLogout} className="text-slate-600 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400">
+                            Log out
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        </nav>
+    );
 }
 
 // --- Main Dashboard Component ---
 
 export default function DashboardPage() {
-    const { loading, zaps, setZaps } = useZaps();
+    const { loading, zaps, setZaps, error, retry } = useZaps();
     const router = useRouter();
 
+    useEffect(() => {
+        if (error === "auth") router.replace("/signin");
+    }, [error, router]);
+
+    if (error === "auth") {
+        return (
+            <div className="bg-slate-50 dark:bg-slate-950 min-h-screen flex items-center justify-center">
+                <div className="animate-spin w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+            </div>
+        );
+    }
+
     return (
-        <div className="bg-gray-50 min-h-screen font-sans">
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-                <div className="flex justify-between items-center mb-10">
+        <div className="bg-slate-50 dark:bg-slate-950 min-h-screen transition-colors duration-200">
+            <DashboardNavbar />
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+                <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-10 gap-4">
                     <div>
-                        <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
-                            My Workflows
+                        <h1 className="text-3xl font-bold text-slate-900 dark:text-white tracking-tight">
+                            My Zaps
                         </h1>
-                        <p className="mt-2 text-slate-500 text-lg">Manage and automate your tasks.</p>
+                        <p className="text-slate-500 dark:text-slate-400 mt-2">
+                            Manage and monitor your automated workflows.
+                        </p>
                     </div>
-                    <button
+                    <Button
                         onClick={() => router.push("/editor")}
-                        className="bg-purple-600 text-white font-semibold px-6 py-3 rounded-xl shadow-lg hover:bg-purple-700 hover:shadow-purple-500/30 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition-all transform hover:-translate-y-0.5"
+                        variant="primary"
+                        className="shadow-md hover:shadow-lg transition-all"
+                        leftIcon={<span className="text-xl leading-none font-bold">+</span>}
                     >
-                        + Create Zap
-                    </button>
+                        Create Zap
+                    </Button>
                 </div>
 
-                {loading ? <SkeletonLoader /> : <ZapGrid zaps={zaps} setZaps={setZaps} />}
+                {error && error !== "auth" && (
+                    <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 flex items-center justify-between gap-4">
+                        <span className="text-sm font-medium">{error}</span>
+                        <Button variant="outline" size="sm" onClick={retry}>Try again</Button>
+                    </div>
+                )}
+
+                {loading ? <SkeletonLoader /> : <ZapGrid zaps={zaps} />}
             </div>
         </div>
     );
@@ -93,133 +220,96 @@ export default function DashboardPage() {
 
 // --- Zap Grid Component ---
 
-function ZapGrid({ zaps, setZaps }: { zaps: Zap[], setZaps: React.Dispatch<React.SetStateAction<Zap[]>> }) {
+function ZapGrid({ zaps }: { zaps: Zap[] }) {
+    const router = useRouter();
+
     if (zaps.length === 0) {
-        return <EmptyState />;
+        return <EmptyState onCreateZap={() => router.push("/editor")} />;
     }
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {zaps.map(zap => <ZapCard key={zap.id} zap={zap} setZaps={setZaps} />)}
+            {zaps.map(zap => <ZapCard key={zap.id} zap={zap} />)}
         </div>
     );
 }
 
 // --- Single Zap Card Component ---
 
-function ZapCard({ zap, setZaps }: { zap: Zap, setZaps: React.Dispatch<React.SetStateAction<Zap[]>> }) {
+function ZapCard({ zap }: { zap: Zap }) {
     const router = useRouter();
-    const { success, error } = useToast();
+    const [copied, setCopied] = useState(false);
     const webhookUrl = `${HOOKS_URL}/hooks/catch/1/${zap.id}`;
+    const defaultName = "Untitled Zap";
 
-    const handleCopy = async (e: React.MouseEvent, text: string) => {
+    const copyToClipboard = (e: React.MouseEvent) => {
         e.stopPropagation();
-        const copied = await copyToClipboard(text);
-        if (copied) success("Webhook URL copied!");
-        else error("Failed to copy");
+        navigator.clipboard.writeText(webhookUrl).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        });
     };
 
     return (
         <div
             onClick={() => router.push("/zap/" + zap.id)}
-            className="group block p-6 bg-white rounded-2xl shadow-sm border border-slate-200 hover:border-purple-300 hover:shadow-md transition-all cursor-pointer relative overflow-hidden"
+            className="group bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col h-full"
         >
+            {/* Header: Name and Date */}
             <div className="flex justify-between items-start mb-4">
-                <div className="flex -space-x-3">
-                    <div className="w-10 h-10 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center overflow-hidden shadow-sm z-10">
-                        <img src={zap.trigger?.type?.image ?? ""} alt="" className="w-full h-full object-cover" />
-                    </div>
-                    {Array.isArray(zap.actions) && zap.actions.map((action, i) => (
-                        <div key={action.id || i} className="w-10 h-10 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center overflow-hidden shadow-sm z-[5]">
-                            <img src={action?.type?.image ?? ""} alt="" className="w-full h-full object-cover" />
+                <div className="flex-1 min-w-0 pr-4">
+                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white truncate group-hover:text-primary-600 transition-colors">
+                        {zap.name || defaultName}
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        Created on {formatDate(zap.createdAt)}
+                    </p>
+                </div>
+            </div>
+
+            {/* Icon Flow Visualization */}
+            <div className="flex items-center gap-2 mb-6 overflow-hidden">
+                <div className="relative shrink-0" title={zap.trigger.type.name}>
+                    <img
+                        src={zap.trigger.type.image}
+                        alt="Trigger"
+                        className="w-10 h-10 rounded-lg bg-slate-50 border border-slate-100 dark:bg-slate-800 dark:border-slate-700 object-contain p-1.5"
+                    />
+                </div>
+
+                {Array.isArray(zap.actions) && zap.actions.map((action, idx) => (
+                    <div key={action.id} className="flex items-center gap-2 shrink-0">
+                        <ArrowRightIcon />
+                        <div className="relative" title={action.type.name}>
+                            <img
+                                src={action.type.image}
+                                alt="Action"
+                                className="w-10 h-10 rounded-lg bg-slate-50 border border-slate-100 dark:bg-slate-800 dark:border-slate-700 object-contain p-1.5"
+                            />
                         </div>
-                    ))}
-                </div>
-                <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-green-100 text-green-700`}>
-                    Active
-                </div>
+                    </div>
+                ))}
             </div>
 
-            <div className="mb-4">
-                <ZapNameDisplay zap={zap} setZaps={setZaps} />
-            </div>
-
-            <div className="text-xs text-slate-400 font-medium mb-4 flex items-center">
-                <span className="mr-2">Created {formatDate(zap.createdAt)}</span>
-                <span>•</span>
-                <span className="ml-2">ID: {zap.id}</span>
-            </div>
-
-            <div className="mt-4 pt-4 border-t border-slate-100 flex justify-between items-center group/url">
-                <div className="flex items-center text-xs text-slate-500 bg-slate-50 px-2 py-1.5 rounded-md max-w-[70%] truncate">
-                    <span className="truncate">{webhookUrl}</span>
-                </div>
+            {/* Footer: Webhook & Action */}
+            <div className="mt-auto pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
                 <button
-                    onClick={(e) => handleCopy(e, webhookUrl)}
-                    className="p-1.5 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded-md transition-colors"
-                    title="Copy Webhook URL"
+                    onClick={copyToClipboard}
+                    className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-xs font-medium text-slate-600 dark:text-slate-400 border border-transparent hover:border-slate-200 dark:hover:border-slate-700 truncate min-w-0"
+                    title={webhookUrl}
                 >
-                    <CopyIcon />
+                    {copied ? <CheckIcon /> : <CopyIcon />}
+                    <span className="truncate">{copied ? "Copied Link" : "Copy Webhook URL"}</span>
                 </button>
+
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 text-primary-600 hover:text-primary-700 hover:bg-primary-50 dark:hover:bg-primary-900/20"
+                >
+                    Open
+                </Button>
             </div>
-
-            <div className="absolute top-0 right-0 p-6 opacity-0 group-hover:opacity-100 transition-opacity">
-                <svg className="w-5 h-5 text-gray-300 transform group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-            </div>
-        </div>
-    );
-}
-
-// --- ✨ New Gemini-Powered Component ---
-
-function ZapNameDisplay({ zap, setZaps }: { zap: Zap, setZaps: React.Dispatch<React.SetStateAction<Zap[]>> }) {
-    const [isGenerating, setIsGenerating] = useState(false);
-    const { error, success } = useToast();
-    const defaultName = "Untitled Workflow";
-
-    const handleSuggestName = async (e: React.MouseEvent) => {
-        e.stopPropagation();
-        setIsGenerating(true);
-        // ... (Keep existing prompt logic, simplified for brevity in thought, but full implementation in code)
-        // Re-using existing logic logic but adapting UI
-        const prompt = `Generate a short name for automation: ${zap.trigger.type.name} to ${zap.actions.map(a => a.type.name).join(', ')}. Max 5 words.`;
-        try {
-            // Mocking or re-implementing call for brevity in replacement? 
-            // actually I should copy the logic from original file or it will be lost.
-            // I will assume the original logic is good.
-            // Re-implementing logic:
-            const chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
-            const payload = { contents: chatHistory };
-            const apiKey = process.env.NEXT_PUBLIC_GEMINI_API || "YOUR_KEY_HERE";
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-            const response = await fetch(apiUrl, { method: 'POST', body: JSON.stringify(payload) });
-            const result = await response.json();
-            if (result.candidates?.[0]?.content?.parts?.[0]?.text) {
-                const newName = result.candidates[0].content.parts[0].text.trim().replace(/"/g, '');
-
-                await api.patch(API_ROUTES.ZAP.UPDATE(zap.id), { name: newName });
-
-                setZaps(prevZaps => prevZaps.map(z => z.id === zap.id ? { ...z, name: newName } : z));
-                success("Name generated!");
-            }
-        } catch (e) { console.error(e); } finally { setIsGenerating(false); }
-    };
-
-    return (
-        <div className="flex items-center justify-between group/edit">
-            <h3 className="text-lg font-bold text-slate-800 truncate pr-2" title={zap.name || defaultName}>
-                {zap.name || defaultName}
-            </h3>
-            <button
-                onClick={handleSuggestName}
-                disabled={isGenerating}
-                className="opacity-0 group-hover/edit:opacity-100 p-1.5 rounded-full hover:bg-purple-100 text-purple-500 transition-all transform hover:scale-110"
-                title="Auto-generate name"
-            >
-                {isGenerating ? <div className="w-4 h-4 border-2 border-purple-500 rounded-full animate-spin border-t-transparent" /> : <MagicWandIcon />}
-            </button>
         </div>
     );
 }
@@ -227,35 +317,38 @@ function ZapNameDisplay({ zap, setZaps }: { zap: Zap, setZaps: React.Dispatch<Re
 // --- Placeholder Components ---
 
 const SkeletonLoader = () => (
-    <div className="bg-white rounded-xl shadow-md p-6">
-        <div className="animate-pulse">
-            <div className="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
-            <div className="space-y-4">
-                {[...Array(3)].map((_, i) => (
-                    <div key={i} className="flex items-center space-x-4 py-2">
-                        <div className="h-10 w-24 bg-gray-200 rounded"></div>
-                        <div className="h-10 flex-1 bg-gray-200 rounded"></div>
-                        <div className="h-10 w-24 bg-gray-200 rounded"></div>
-                        <div className="h-10 w-32 bg-gray-200 rounded"></div>
-                    </div>
-                ))}
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {[...Array(6)].map((_, i) => (
+            <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 h-[200px] animate-pulse flex flex-col">
+                <div className="h-5 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-2"></div>
+                <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-1/3 mb-6"></div>
+                <div className="flex gap-3 mb-auto">
+                    <div className="w-10 h-10 bg-slate-200 dark:bg-slate-700 rounded-lg"></div>
+                    <div className="w-10 h-10 bg-slate-200 dark:bg-slate-700 rounded-lg"></div>
+                </div>
+                <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-full mt-4"></div>
+            </div>
+        ))}
+    </div>
+);
+
+function EmptyState({ onCreateZap }: { onCreateZap: () => void }) {
+    return (
+        <div className="text-center py-24 px-6 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col items-center col-span-full">
+            <div className="h-16 w-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                <svg className="h-8 w-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                </svg>
+            </div>
+            <h3 className="text-xl font-semibold text-slate-900 dark:text-white">No Zaps found</h3>
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 max-w-sm">
+                You haven't created any automated workflows yet. Start by creating your first Zap to save time.
+            </p>
+            <div className="mt-8">
+                <Button onClick={onCreateZap} variant="primary" size="lg" className="shadow-lg">
+                    Create your first Zap
+                </Button>
             </div>
         </div>
-    </div>
-);
-
-const EmptyState = () => (
-    <div className="text-center py-20 px-6 bg-white rounded-xl shadow-md">
-        <h3 className="text-xl font-semibold text-gray-800">No Zaps Yet!</h3>
-        <p className="mt-2 text-gray-500">It looks like you haven't created any Zaps. Get started by automating your first workflow.</p>
-        <div className="mt-6">
-            <button
-                onClick={() => (window.location.href = "/editor")}
-                className="bg-blue-600 text-white font-semibold px-5 py-2.5 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition"
-            >
-                Create Your First Zap
-            </button>
-        </div>
-    </div>
-);
-
+    );
+}

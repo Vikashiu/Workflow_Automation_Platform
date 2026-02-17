@@ -3,94 +3,66 @@
 @source "../.flowbite-react/class-list.json";
 
 @theme {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-border: var(--border);
-  --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
+  /* Extended Colors - Premium Violet/Indigo Vibes */
+  --color-primary-50: #f5f3ff;
+  --color-primary-100: #ede9fe;
+  --color-primary-200: #ddd6fe;
+  --color-primary-300: #c4b5fd;
+  --color-primary-400: #a78bfa;
+  --color-primary-500: #8b5cf6;
+  --color-primary-600: #7c3aed;
+  --color-primary-700: #6d28d9;
+  --color-primary-800: #5b21b6;
+  --color-primary-900: #4c1d95;
+  --color-primary-950: #2e1065;
 }
 
+/* Base Variables for Light/Dark Mode */
 :root {
-  --background: hsl(0, 0%, 100%);
-  --foreground: hsl(240, 10%, 3.9%);
-  --primary: hsl(262.1, 83.3%, 57.8%);
-  --primary-foreground: hsl(0, 0%, 98%);
-  --card: hsl(0, 0%, 100%);
-  --card-foreground: hsl(240, 10%, 3.9%);
-  --muted: hsl(240, 4.8%, 95.9%);
-  --muted-foreground: hsl(240, 3.8%, 46.1%);
-  --border: hsl(240, 5.9%, 90%);
-  --radius: 0.5rem;
+  --background: #ffffff;
+  --foreground: #0f172a; /* slate-900 */
+  --muted: #64748b; /* slate-500 */
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0; /* slate-200 */
+  --input-bg: #ffffff; /* slate-50 */
+  --input-border: #cbd5e1; /* slate-300 */
 }
 
-.dark {
-  --background: hsl(240, 10%, 3.9%);
-  --foreground: hsl(0, 0%, 98%);
-  --primary: hsl(263.4, 70%, 50.4%);
-  --primary-foreground: hsl(0, 0%, 98%);
-  --card: hsl(240, 10%, 3.9%);
-  --card-foreground: hsl(0, 0%, 98%);
-  --muted: hsl(240, 3.7%, 15.9%);
-  --muted-foreground: hsl(240, 5%, 64.9%);
-  --border: hsl(240, 3.7%, 15.9%);
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #020617; /* slate-950 */
+    --foreground: #f8fafc; /* slate-50 */
+    --muted: #94a3b8; /* slate-400 */
+    --card-bg: #0f172a; /* slate-900 */
+    --card-border: #1e293b; /* slate-800 */
+    --input-bg: #0f172a;
+    --input-border: #334155; /* slate-700 */
+  }
 }
 
+/* Global Reset & Base Styles */
 @layer base {
   body {
     background-color: var(--background);
     color: var(--foreground);
-    @apply antialiased;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
-/* Utilities */
-.bg-grid-pattern {
-  background-size: 40px 40px;
-  background-image: linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+/* Utility classes for glassmorphism */
+@utility glass {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.dark .bg-grid-pattern {
-  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-}
-
-/* Animations */
-@keyframes slide-in {
-  from {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-.animate-slide-in {
-  animation: slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-in {
-  animation: fade-in 0.4s ease-out forwards;
+@utility glass-dark {
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }

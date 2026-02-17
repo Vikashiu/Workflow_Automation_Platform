@@ -1,3 +1,5 @@
+import { Input } from "./ui/Input";
+
 type InputFieldProps = {
   label: string;
   required?: boolean;
@@ -14,17 +16,13 @@ export function InputField({
   onChange,
 }: InputFieldProps) {
   return (
-    <div className="w-full mb-4">
-      <label className="block text-sm font-medium text-gray-700">
-        {required && "* "} {label}
-      </label>
-      <input
-        type={type}
-        required={required}
-        className="w-full border rounded-md px-3 py-2 mt-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    </div>
+    <Input
+      label={label}
+      type={type}
+      required={required}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      containerClassName="mb-4"
+    />
   );
 }
