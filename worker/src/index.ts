@@ -53,11 +53,11 @@ function resolveTemplatesInObject(obj: any, payload: any): any {
     if (typeof obj === "string") {
         return resolveTemplate(obj, payload);
     }
-    
+
     if (Array.isArray(obj)) {
         return obj.map((item) => resolveTemplatesInObject(item, payload));
     }
-    
+
     if (obj !== null && typeof obj === "object") {
         const resolved: any = {};
         for (const key in obj) {
@@ -67,7 +67,7 @@ function resolveTemplatesInObject(obj: any, payload: any): any {
         }
         return resolved;
     }
-    
+
     return obj;
 }
 
@@ -94,7 +94,7 @@ async function main() {
     const consumer = kafka.consumer({ groupId: 'main-worker' });
     await consumer.connect();
     console.log("✅ Worker started - listening for zap events");
-    
+
     await consumer.subscribe({ topic: TOPIC_NAME, fromBeginning: true });
     await consumer.run({
         autoCommit: false,
@@ -143,6 +143,14 @@ async function main() {
                     return;
                 }
 
+                // Mark as running on first stage
+                if (stage === 0) {
+                    await prismaClient.zapRun.update({
+                        where: { id: zapRunId },
+                        data: { status: 'running' }
+                    });
+                }
+
                 // Get actual webhook payload (or fallback to metadata for compatibility)
                 const webhookPayload = typeof zapRunDetails.payload === "string"
                     ? JSON.parse(zapRunDetails.payload)
@@ -179,8 +187,8 @@ async function main() {
                 if (currentAction.type.id === "email") {
                     console.log("📧 Sending email");
                     const { email, subject, body } = resolvedMetadata;
-                    await sendEmail({ 
-                        email: email as string, 
+                    await sendEmail({
+                        email: email as string,
                         body: body as string,
                         subject: subject as string
                     } as any);
@@ -251,6 +259,10 @@ async function main() {
                     });
                 } else {
                     console.log(`✅ Zap execution completed for zapRunId: ${zapRunId}`);
+                    await prismaClient.zapRun.update({
+                        where: { id: zapRunId },
+                        data: { status: 'completed' }
+                    });
                 }
 
                 // Commit offset
@@ -262,6 +274,16 @@ async function main() {
 
             } catch (error) {
                 console.error("❌ Error processing message:", error);
+                // Mark run as failed
+                try {
+                    const parsedValue = message.value ? JSON.parse(message.value.toString()) : null;
+                    if (parsedValue?.zapRunId) {
+                        await prismaClient.zapRun.update({
+                            where: { id: parsedValue.zapRunId },
+                            data: { status: 'failed' }
+                        });
+                    }
+                } catch { /* ignore secondary error */ }
                 // Commit offset even on error to avoid stuck messages
                 await consumer.commitOffsets([{
                     topic: TOPIC_NAME,

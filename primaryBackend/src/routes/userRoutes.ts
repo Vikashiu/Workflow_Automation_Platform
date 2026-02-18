@@ -8,7 +8,7 @@ import { authMiddleware } from "../authMiddleware";
 const userRouter = Router();
 
 userRouter.post('/signup', async (req: any, res: any) => {
-    
+
     const body = req.body;
     const parsedData = SignupData.safeParse(body);
 
@@ -47,7 +47,7 @@ userRouter.post('/signup', async (req: any, res: any) => {
 
 })
 userRouter.post('/signin', async (req, res) => {
-    
+
 
     const body = req.body;
     const parsedData = SigninData.safeParse(body);
@@ -68,7 +68,7 @@ userRouter.post('/signin', async (req, res) => {
             message: "sorry credential are incorrect"
         })
     }
-    
+
     const id = user?.id;
     const token = jwt.sign({ id }, JWT_PASSWORD)
 
@@ -78,7 +78,7 @@ userRouter.post('/signin', async (req, res) => {
 
 })
 userRouter.get('/', authMiddleware, async (req, res) => {
-    
+
     //@ts-ignore
     const id = req.id;
     const user = await prismaClient.user.findFirst({
@@ -96,5 +96,28 @@ userRouter.get('/', authMiddleware, async (req, res) => {
 
 
 })
+
+// GET /api/v1/user/connections — returns OAuth connection status
+userRouter.get('/connections', authMiddleware, async (req: any, res: any) => {
+    const userId = req.id?.toString();
+    try {
+        const [google, notion] = await Promise.all([
+            prismaClient.googleCredentials.findFirst({ where: { userId } }),
+            prismaClient.notionCredential.findFirst({ where: { userId } }),
+        ]);
+        res.json({
+            google: {
+                connected: !!google,
+                expiryDate: google?.expiryDate ?? null,
+            },
+            notion: {
+                connected: !!notion,
+                workspaceName: notion?.workspaceName ?? null,
+            },
+        });
+    } catch {
+        res.status(500).json({ message: 'Failed to fetch connections' });
+    }
+});
 
 export default userRouter;

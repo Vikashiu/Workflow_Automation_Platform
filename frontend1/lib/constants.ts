@@ -29,12 +29,21 @@ export const API_ROUTES = {
         SIGNIN: `${BACKEND_URL}/api/v1/user/signin`,
         SIGNUP: `${BACKEND_URL}/api/v1/user/signup`,
     },
+    USER: {
+        ME: `${BACKEND_URL}/api/v1/user`,
+        CONNECTIONS: `${BACKEND_URL}/api/v1/user/connections`,
+        GOOGLE_AUTH: `${BACKEND_URL}/auth`,
+        NOTION_AUTH: `${BACKEND_URL}/api/oauth/notion`,
+    },
     ZAP: {
         CREATE: `${BACKEND_URL}/api/v1/zap/create`,
         GET_ALL: `${BACKEND_URL}/api/v1/zap/user`,
         GET_BY_ID: (id: string) => `${BACKEND_URL}/api/v1/zap/${id}`,
         UPDATE: (id: string) => `${BACKEND_URL}/api/v1/zap/${id}`,
+        DELETE: (id: string) => `${BACKEND_URL}/api/v1/zap/${id}`,
         GET_LATEST_RUN: (id: string) => `${BACKEND_URL}/api/v1/zap/${id}/runs/latest`,
+        GET_ALL_RUNS: (page?: number, limit?: number) =>
+            `${BACKEND_URL}/api/v1/zap/runs/all?page=${page ?? 1}&limit=${limit ?? 20}`,
     },
     TRIGGER: {
         AVAILABLE: `${BACKEND_URL}/api/v1/trigger/available`,

@@ -71,6 +71,7 @@ model ZapRun {
   zapId         String
   metadata      Json          @default("{}")          // DEPRECATED: Left for compatibility
   payload       Json          @default("{}")          // Actual webhook event payload from trigger
+  status        String        @default("pending")     // pending | running | completed | failed
   createdAt     DateTime      @default(now())
   zap           Zap           @relation(fields: [zapId], references: [id])
   zapRunOutbox  ZapRunOutbox?
