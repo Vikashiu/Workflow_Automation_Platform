@@ -474,7 +474,8 @@ export function Canvas({ initialZapId }: { initialZapId?: string }) {
       }
       return node;
     }));
-    setConfigModal(false);
+    setTriggerConfigOpen(false);
+    setActionConfigOpen(false);
   };
 
   const handleSelectComponent = async (item: Trigger | Action, type: 'trigger' | 'action') => {
