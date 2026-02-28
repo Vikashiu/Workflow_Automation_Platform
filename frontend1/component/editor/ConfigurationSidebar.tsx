@@ -9,8 +9,10 @@ import { EmailSelector } from "./config-selectors/EmailSelector";
 import { GoogleCalendarSelector } from "./config-selectors/GoogleCalendarSelector";
 import { SlackSelector } from "./config-selectors/SlackSelector";
 import { DiscordSelector } from "./config-selectors/DiscordSelector";
+import { GoogleDriveSelector } from "./config-selectors/GoogleDriveSelector";
 import { api } from "@/lib/api-client";
 import { API_ROUTES } from "@/lib/constants";
+import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/contexts/ToastContext";
 import { PrimaryButton } from "../buttons/PrimaryButton";
 
@@ -24,6 +26,10 @@ interface ConfigurationSidebarProps {
     zapId?: string;
     nodes?: Node[];
     onChangeAction?: () => void;
+    /** Trigger sample fields lifted to canvas level so they persist */
+    triggerSampleFields?: { key: string; label: string; example: string }[];
+    /** Called when the trigger sidebar successfully fetches sample fields */
+    onTriggerSampleFields?: (fields: { key: string; label: string; example: string }[]) => void;
 }
 
 // Apps that require authentication
@@ -33,7 +39,8 @@ const APPS_REQUIRING_AUTH = [
     "Google Calender",
     "Slack",
     "Discord",
-    "Gemini"
+    "Gemini",
+    "Google Drive",
 ];
 
 const flattenObject = (obj: any, prefix = ''): { key: string, value: any }[] => {
@@ -59,15 +66,17 @@ export const ConfigurationSidebar = ({
     updateNodeMetadata,
     zapId,
     nodes = [],
-    onChangeAction = () => { }
+    onChangeAction = () => { },
+    triggerSampleFields = [],
+    onTriggerSampleFields,
 }: ConfigurationSidebarProps) => {
+    const { user } = useAuth();
     const { success, error } = useToast();
     const [activeTab, setActiveTab] = useState<Tab>('setup');
 
     // Test Data State
-    const [fetchedFields, setFetchedFields] = useState<any[]>([]);
     const [isLoadingRun, setIsLoadingRun] = useState(false);
-    const [testRunFound, setTestRunFound] = useState(false);
+    const [testRunFound, setTestRunFound] = useState(triggerSampleFields.length > 0);
     const [isLoadingTest, setIsLoadingTest] = useState(false);
     const [testResult, setTestResult] = useState<any>(null);
     const [hasTestedAction, setHasTestedAction] = useState(false);
@@ -95,8 +104,10 @@ export const ConfigurationSidebar = ({
             setTestResult(null);
             setHasTestedAction(false);
             setIsAuthenticated(false);
+            // Restore testRunFound based on persisted fields
+            setTestRunFound(triggerSampleFields.length > 0);
         }
-    }, [isOpen, selectedTrigger?.id, selectedAction?.id]);
+    }, [isOpen, selectedTrigger?.id, selectedAction?.id, triggerSampleFields.length]);
 
     const handleAuthenticate = async () => {
         setIsAuthenticating(true);
@@ -114,28 +125,36 @@ export const ConfigurationSidebar = ({
 
     const handleTestTrigger = async () => {
         if (!zapId) {
-            error("Save Zap first to test trigger");
+            error("Please Publish the Zap first to test the webhook.");
             return;
         }
         setIsLoadingRun(true);
         try {
-            const res = await api.get<any>(API_ROUTES.ZAP.GET_LATEST_RUN(zapId));
-            // Check for payload, fall back to metadata if needed, though payload is preferred for triggers
-            const dataToFlatten = res.run?.payload || res.run?.metadata;
+            // First fetch the Zap's configured trigger to get its unique ID
+            const zapRes = await api.get<any>(API_ROUTES.ZAP.GET_BY_ID(zapId));
+            const triggerId = zapRes.zap?.trigger?.id;
 
-            if (res.run && dataToFlatten) {
-                // We flatten the payload with 'trigger' prefix so users see "trigger.body.email" etc.
-                const flat = flattenObject(dataToFlatten, 'trigger');
+            if (!triggerId) {
+                error("No trigger found for this Zap. Please configure a trigger.");
+                setIsLoadingRun(false);
+                return;
+            }
 
-                const fields = flat.map(f => ({
-                    key: f.key,
-                    label: f.key,
+            // Call the new trigger fields endpoint
+            const res = await api.get<any>(API_ROUTES.TRIGGER.GET_FIELDS(triggerId));
+
+            if (res.fields && res.fields.length > 0) {
+                // Map the primitive fields into the format expected by the UI
+                const fields = res.fields.map((f: any) => ({
+                    key: "trigger." + f.path,
+                    label: "trigger." + f.path,
                     example: String(f.value).substring(0, 50)
                 }));
 
-                setFetchedFields(fields);
+                // Lift fields to canvas level so they persist and are available to actions
+                onTriggerSampleFields?.(fields);
                 setTestRunFound(true);
-                success("We found a request!");
+                success("We found a request! You can now use this data in your actions.");
             } else {
                 setTestRunFound(false);
                 error("No request found. Try sending one to the webhook URL.");
@@ -150,30 +169,42 @@ export const ConfigurationSidebar = ({
 
     const handleTestAction = async () => {
         if (!zapId) {
-            error("Save Zap first to test action");
+            error("Save the Zap first before testing an action.");
+            return;
+        }
+        if (!selectedAction) {
+            error("No action selected.");
             return;
         }
         setIsLoadingTest(true);
         try {
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            const res = await api.post<{
+                success: boolean;
+                message: string;
+                testRunId: string;
+                status: string;
+                timestamp: string;
+            }>(API_ROUTES.ZAP.TEST_ACTION(zapId), {
+                actionId: selectedAction.id,
+                metadata: selectedAction,
+            });
+
             setTestResult({
                 status: 'success',
-                message: `${selectedAction?.name} executed successfully!`,
+                message: res.message,
                 data: {
-                    "id": "evt_12345",
-                    "status": "completed",
-                    "timestamp": new Date().toISOString(),
+                    testRunId: res.testRunId,
+                    status: res.status,
+                    timestamp: res.timestamp,
                 }
             });
             setHasTestedAction(true);
-            success("Test run successful!");
-        } catch (e) {
+            success(res.message);
+        } catch (e: any) {
             console.error(e);
-            setTestResult({
-                status: 'error',
-                message: 'Test failed. Please check your configuration.',
-            });
-            error("Test run failed");
+            const msg = e?.response?.data?.message || 'Test failed. Please check your configuration.';
+            setTestResult({ status: 'error', message: msg });
+            error(msg);
         } finally {
             setIsLoadingTest(false);
         }
@@ -184,24 +215,24 @@ export const ConfigurationSidebar = ({
     const currentItem = selectedAction || selectedTrigger;
     const isTrigger = !!selectedTrigger;
 
-    // Previous steps data setup
+    // Build previous steps data from the persisted trigger sample fields
     const previousStepsData = [
         {
             stepId: "trigger",
             stepName: "1. Webhook Trigger",
-            fields: [
-                ...fetchedFields.length > 0 ? fetchedFields : [
-                    { key: "trigger.body", label: "Body (Sample)", example: "{...}" },
-                    { key: "trigger.headers", label: "Headers" },
-                    { key: "trigger.query", label: "Query Params" }
+            fields: triggerSampleFields.length > 0
+                ? triggerSampleFields
+                : [
+                    { key: "trigger.body", label: "Body (raw)", example: "{...}" },
+                    { key: "trigger.headers", label: "Headers", example: "{...}" },
+                    { key: "trigger.query", label: "Query Params", example: "{...}" }
                 ]
-            ]
         }
     ];
 
     const copyUrl = () => {
-        if (!zapId) return;
-        const url = `${API_ROUTES.HOOKS.CATCH("1", zapId)}`;
+        if (!zapId || !user?.id) return;
+        const url = `${API_ROUTES.HOOKS.CATCH(user.id.toString(), zapId)}`;
         navigator.clipboard.writeText(url);
         success("Copied to clipboard!");
     };
@@ -254,19 +285,20 @@ export const ConfigurationSidebar = ({
                                     <div className="px-3 py-2 border-r border-gray-300 bg-gray-100">
                                         <img src="https://assets.zapier.com/zapier/assets/app-icons/webhook/webhook-16.png" className="w-4 h-4 opacity-50 grayscale" alt="" />
                                     </div>
-                                    <code className="px-3 py-2 text-xs text-gray-600 truncate flex-1 font-mono">
-                                        {zapId ? `${API_ROUTES.HOOKS.CATCH("1", zapId)}` : "Save Zap to generate URL"}
+                                    <code className={`px-3 py-2 text-xs truncate flex-1 font-mono ${zapId && user?.id ? "text-gray-600" : "text-amber-600 font-bold"}`}>
+                                        {zapId && user?.id ? `${API_ROUTES.HOOKS.CATCH(user.id.toString(), zapId)}` : "⚠️ Please PUBLISH the Zap to generate your URL"}
                                     </code>
                                 </div>
                                 <button
                                     onClick={copyUrl}
-                                    className="px-4 py-2 border border-gray-300 rounded text-sm font-bold text-gray-700 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+                                    disabled={!zapId}
+                                    className="px-4 py-2 border border-gray-300 rounded text-sm font-bold text-gray-700 hover:bg-gray-50 hover:text-gray-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     Copy
                                 </button>
                             </div>
                             <p className="text-xs text-gray-500">
-                                We've generated a custom webhook URL for this Zap.
+                                {zapId ? "We've generated a custom webhook URL for this Zap." : "We need you to save the workflow so we can assign a unique endpoint to it."}
                             </p>
                         </div>
 
@@ -287,14 +319,14 @@ export const ConfigurationSidebar = ({
                             </p>
                         </div>
 
-                        {fetchedFields.length > 0 && (
+                        {triggerSampleFields.length > 0 && (
                             <div className="mb-6 p-4 border border-green-200 bg-green-50 rounded-lg">
                                 <div className="flex items-center gap-2 mb-3">
                                     <div className="w-5 h-5 rounded-full bg-green-500 text-white flex items-center justify-center text-xs">✓</div>
-                                    <span className="font-bold text-green-800 text-sm">Request found!</span>
+                                    <span className="font-bold text-green-800 text-sm">Request found! These fields are available in your actions.</span>
                                 </div>
                                 <div className="max-h-40 overflow-y-auto text-xs font-mono bg-white p-2 rounded border border-green-100">
-                                    {fetchedFields.map(f => (
+                                    {triggerSampleFields.map(f => (
                                         <div key={f.key} className="flex justify-between border-b border-gray-50 py-1 last:border-0">
                                             <span className="font-semibold text-gray-600">{f.key}</span>
                                             <span className="text-gray-400 truncate ml-2 max-w-[150px]">{f.example}</span>
@@ -451,6 +483,7 @@ export const ConfigurationSidebar = ({
                                         {selectedAction?.name === "Google Calender" && <GoogleCalendarSelector setMetadata={updateNodeMetadata} previousSteps={previousStepsData} />}
                                         {selectedAction?.name === "Slack" && <SlackSelector setMetadata={updateNodeMetadata} previousSteps={previousStepsData} />}
                                         {selectedAction?.name === "Discord" && <DiscordSelector setMetadata={updateNodeMetadata} previousSteps={previousStepsData} />}
+                                        {selectedAction?.name === "Google Drive" && <GoogleDriveSelector setMetadata={updateNodeMetadata} previousSteps={previousStepsData} />}
                                     </div>
 
                                     <div className="pt-2 space-y-3 flex gap-3">

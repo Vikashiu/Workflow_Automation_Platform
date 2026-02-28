@@ -58,7 +58,7 @@ export async function getWorksheets(userId: string, spreadsheetId: string): Prom
         const response = await sheets.spreadsheets.get({
             spreadsheetId,
         });
-        
+
         const worksheetTitles = response.data.sheets?.map(sheet => sheet.properties?.title || '').filter(Boolean);
         return worksheetTitles || [];
 
@@ -181,6 +181,41 @@ app.get("/sheets/:spreadsheetId/worksheets/:sheetName/columns", authMiddleware, 
     } catch (error) {
         console.error("Error fetching columns:", error);
         res.status(500).json({ message: "Failed to fetch columns." });
+    }
+});
+
+// ─── Google Drive Routes ──────────────────────────────────────────────────────
+
+/**
+ * GET /drive/folders
+ * Lists the user's Google Drive folders so they can pick a save destination.
+ */
+app.get("/drive/folders", authMiddleware, async (req, res) => {
+    // @ts-ignore
+    const userId = req.id.toString();
+
+    try {
+        const auth = await getAuthenticatedClient(userId);
+        const drive = google.drive({ version: "v3", auth });
+
+        const response = await drive.files.list({
+            q: "mimeType='application/vnd.google-apps.folder' and trashed=false",
+            fields: "files(id, name)",
+            orderBy: "name",
+            pageSize: 100,
+        });
+
+        const folders = (response.data.files || []).map((f: any) => ({
+            id: f.id || "",
+            name: f.name || "Unnamed Folder",
+        }));
+
+        // Always prepend root as an option
+        const allFolders = [{ id: "root", name: "\ud83d\udcc1 My Drive (root)" }, ...folders];
+        res.json({ folders: allFolders });
+    } catch (error) {
+        console.error("Error fetching Google Drive folders:", error);
+        res.status(500).json({ message: "Failed to fetch Drive folders." });
     }
 });
 

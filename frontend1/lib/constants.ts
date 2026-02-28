@@ -16,7 +16,7 @@ export const HOOKS_URL = process.env.NEXT_PUBLIC_HOOKS_URL || "http://localhost:
  * Storage Keys
  */
 export const STORAGE_KEYS = {
-    AUTH_TOKEN: "auth_token",
+    AUTH_TOKEN: "token", // Matches the key used by LoginCard and all dashboard pages
     USER_PREFERENCES: "user_preferences",
     THEME: "theme",
 } as const;
@@ -41,12 +41,15 @@ export const API_ROUTES = {
         GET_BY_ID: (id: string) => `${BACKEND_URL}/api/v1/zap/${id}`,
         UPDATE: (id: string) => `${BACKEND_URL}/api/v1/zap/${id}`,
         DELETE: (id: string) => `${BACKEND_URL}/api/v1/zap/${id}`,
+        TOGGLE: (id: string) => `${BACKEND_URL}/api/v1/zap/${id}`,
         GET_LATEST_RUN: (id: string) => `${BACKEND_URL}/api/v1/zap/${id}/runs/latest`,
+        TEST_ACTION: (id: string) => `${BACKEND_URL}/api/v1/zap/${id}/test-action`,
         GET_ALL_RUNS: (page?: number, limit?: number) =>
             `${BACKEND_URL}/api/v1/zap/runs/all?page=${page ?? 1}&limit=${limit ?? 20}`,
     },
     TRIGGER: {
         AVAILABLE: `${BACKEND_URL}/api/v1/trigger/available`,
+        GET_FIELDS: (triggerId: string) => `${BACKEND_URL}/api/v1/trigger/${triggerId}/fields`,
     },
     ACTION: {
         AVAILABLE: `${BACKEND_URL}/api/v1/action/available`,
@@ -59,6 +62,7 @@ export const API_ROUTES = {
             `${BACKEND_URL}/api/v1/google/sheets/${spreadsheetId}/worksheets/${encodeURIComponent(
                 worksheetName
             )}/columns`,
+        DRIVE_FOLDERS: `${BACKEND_URL}/api/v1/google/drive/folders`,
     },
     HOOKS: {
         CATCH: (userId: string, zapId: string) =>

@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "build": "npm install && tsc -b",
-    "start": "node ./dist/index.js",
+    "build": "tsc -b",
+    "start": "tsc -b && node ./dist/index.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "prisma:generate": "prisma generate",
-
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -20,6 +20,7 @@
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.10",
     "axios": "^1.10.0",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.0.1",
     "express": "^5.1.0",
@@ -31,6 +32,8 @@
     "zod": "^3.25.67"
   },
   "devDependencies": {
-    "@types/node": "^25.0.8"
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^25.0.8",
+    "ts-node-dev": "^2.0.0"
   }
 }

@@ -1,16 +1,23 @@
 import { Router } from "express";
 import { prismaClient } from "../db";
 
-const router =  Router();
+const router = Router();
 
+
+import { ActionInputSchemas } from "../actionSchemas";
 
 router.get("/available", async (req, res) => {
-  
-  const availableActions = await prismaClient.availableAction.findMany({});
+  const actionsData = await prismaClient.availableAction.findMany({});
+
+  // Attach the loosely-coupled schema definitions to the response payload
+  const availableActions = actionsData.map(action => ({
+    ...action,
+    inputSchema: ActionInputSchemas[action.name] || null
+  }));
+
   res.json({
     availableActions
   });
-  
 });
 
 

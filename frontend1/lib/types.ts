@@ -42,11 +42,24 @@ export interface Trigger {
     metadata?: Record<string, unknown>;
 }
 
+export type FieldType = "text" | "textarea" | "number" | "password";
+
+export interface FieldSchema {
+    key: string;
+    label: string;
+    type: FieldType;
+    required?: boolean;
+    placeholder?: string;
+    helpText?: string;
+}
+
+
 export interface Action {
     id: string;
     name: string;
     image: string;
     metadata?: Record<string, unknown>;
+    inputSchema?: FieldSchema[] | null;
 }
 
 export interface TriggerResponse {

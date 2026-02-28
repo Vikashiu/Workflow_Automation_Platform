@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { Button } from "../ui/Button";
 import axios from "axios";
-import { BACKEND_URL } from "@/app/config";
+import { BACKEND_URL } from "@/lib/constants";
 import { useState } from "react";
 
 export function TopBar({ handlePublish, zapName, setZapName }: {

@@ -3,8 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import axios from "axios";
-import { BACKEND_URL } from "../config";
+import { api } from "@/lib/api-client";
 import { API_ROUTES } from "@/lib/constants";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -167,9 +166,9 @@ function RunRow({ run, index }: { run: ZapRunEntry; index: number }) {
                 {/* Timeline dot */}
                 <div className="relative mt-1 shrink-0">
                     <div className={`w-3 h-3 rounded-full border-2 ${run.status === "completed" ? "bg-emerald-500 border-emerald-400" :
-                            run.status === "running" ? "bg-blue-500 border-blue-400 animate-pulse" :
-                                run.status === "failed" ? "bg-red-500 border-red-400" :
-                                    "bg-slate-300 border-slate-200"
+                        run.status === "running" ? "bg-blue-500 border-blue-400 animate-pulse" :
+                            run.status === "failed" ? "bg-red-500 border-red-400" :
+                                "bg-slate-300 border-slate-200"
                         }`} />
                 </div>
 
@@ -311,16 +310,15 @@ export default function ActivityPage() {
         setError(null);
 
         try {
-            const url = `${BACKEND_URL}/api/v1/zap/runs/all?page=${currentPage}&limit=${LIMIT}`;
-            const res = await axios.get<RunsResponse>(url, {
-                headers: { authorization: token }
-            });
-            setRuns(res.data.runs ?? []);
-            setTotal(res.data.total ?? 0);
+            const data = await api.get<RunsResponse>(
+                API_ROUTES.ZAP.GET_ALL_RUNS(currentPage, LIMIT)
+            );
+            setRuns(data.runs ?? []);
+            setTotal(data.total ?? 0);
             setLastRefreshed(new Date());
         } catch (err: unknown) {
-            const status = (err as { response?: { status?: number } })?.response?.status;
-            if (status === 401 || status === 403) {
+            const msg = err instanceof Error ? err.message : "";
+            if (msg.includes("401") || msg.includes("403")) {
                 localStorage.removeItem("token");
                 router.replace("/signin");
             } else {

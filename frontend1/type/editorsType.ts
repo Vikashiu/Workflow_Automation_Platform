@@ -2,14 +2,15 @@ export type Trigger = {
   id: string;
   name: string;
   image: string;
-  metadata?:any
+  metadata?: any
 };
 
 export type Action = {
   id: string;
   name: string;
   image: string;
-  metadata?:any
+  metadata?: any;
+  inputSchema?: any;
 };
 
 export type TriggerResponse = {

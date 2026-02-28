@@ -15,24 +15,17 @@ import {
   Connection,
   FinalConnectionState,
   useReactFlow,
-  getIncomers,
-  getOutgoers,
   MarkerType,
 } from "@xyflow/react";
 import '@xyflow/react/dist/style.css';
-import axios from "axios";
 
-import { BACKEND_URL } from "@/app/config";
+import { api } from "@/lib/api-client";
+import { API_ROUTES } from "@/lib/constants";
+import { useToast } from "@/contexts/ToastContext";
 import { TopBar } from "./Topbar";
 import { SideBar } from "./SideBar";
-import { EmailSelector } from "./selectors/EmailSelector";
-import { SolanaSelector } from "./selectors/SolanaSelector";
-import { GoogleCalendarSelector } from "./selectors/GoogleCalendarSelector";
-import { GoogleSheetSelector } from "./selectors/GoogleSheetSelector";
-import { GeminiSelector } from "./selectors/GeminiSelector";
-import { NotionSelector } from "./selectors/NotionSelector";
-import { SlackSelector } from "./selectors/SlackSelector";
-import { DiscordSelector } from "./selectors/DiscordSelector";
+
+import { ConfigurationSidebar } from "./ConfigurationSidebar";
 
 import CustomNode from "./CustomNode";
 import type { Trigger, Action, TriggerResponse, ActionResponse } from "@/type/editorsType";
@@ -63,17 +56,12 @@ function useAvailableActionsAndTriggers() {
   const [availableTriggers, setAvailableTriggers] = useState<Trigger[]>([]);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    const headers = token ? { authorization: token } : {};
-
-    axios
-      .get<TriggerResponse>(`${BACKEND_URL}/api/v1/trigger/available`, { headers })
-      .then((x) => setAvailableTriggers(x.data.availableTriggers))
+    api.get<TriggerResponse>(API_ROUTES.TRIGGER.AVAILABLE)
+      .then((data) => setAvailableTriggers(data.availableTriggers))
       .catch(console.error);
 
-    axios
-      .get<ActionResponse>(`${BACKEND_URL}/api/v1/action/available`, { headers })
-      .then((x) => setAvailableActions(x.data.availableActions))
+    api.get<ActionResponse>(API_ROUTES.ACTION.AVAILABLE)
+      .then((data) => setAvailableActions(data.availableActions))
       .catch(console.error);
   }, []);
 
@@ -82,10 +70,11 @@ function useAvailableActionsAndTriggers() {
 
 // --- Main Canvas Component ---
 
-export function Canvas() {
+export function Canvas({ initialZapId }: { initialZapId?: string }) {
   const router = useRouter();
+  const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
   const { availableActions, availableTriggers } = useAvailableActionsAndTriggers();
-  const { screenToFlowPosition, getNodes, getEdges } = useReactFlow();
+  const { screenToFlowPosition } = useReactFlow();
 
   // Define custom node types
   const nodeTypes = useMemo(() => ({ custom: CustomNode }), []);
@@ -94,10 +83,108 @@ export function Canvas() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const [openSelectorModal, setOpenSelectorModal] = useState(false);
-  const [openConfigModal, setConfigModal] = useState(false);
+  const [triggerConfigOpen, setTriggerConfigOpen] = useState(false);
+  const [actionConfigOpen, setActionConfigOpen] = useState(false);
   const [selectedAction, setSelectedAction] = useState<Action | null>(null);
+  const [selectedTrigger, setSelectedTrigger] = useState<Trigger | null>(null);
   const [activeNodeId, setActiveNodeId] = useState<string>("");
   const [zapName, setZapName] = useState("Untitled Zap");
+  const [zapId, setZapId] = useState<string | null>(initialZapId ?? null);
+  const [loadingZap, setLoadingZap] = useState(!!initialZapId);
+
+  // Trigger sample fields — lifted here so they persist across sidebar open/close
+  const [triggerSampleFields, setTriggerSampleFields] = useState<{ key: string; label: string; example: string }[]>([]);
+
+  // --- LOAD EXISTING ZAP ---
+
+  useEffect(() => {
+    if (!initialZapId || availableTriggers.length === 0) return;
+
+    let cancelled = false;
+    setLoadingZap(true);
+
+    api.get<{
+      zap: {
+        id: string;
+        name?: string;
+        trigger: { type: { id: string; name: string; image: string }; metadata: any };
+        actions: { id: string; sortingOrder: number; type: { id: string; name: string; image: string }; metadata: any }[];
+      }
+    }>(API_ROUTES.ZAP.GET_BY_ID(initialZapId))
+      .then(({ zap }) => {
+        if (cancelled) return;
+
+        // Set zap meta
+        setZapId(zap.id);
+        if (zap.name) setZapName(zap.name);
+
+        // Hydrate trigger node
+        const triggerType = zap.trigger?.type;
+        const matchedTrigger = triggerType
+          ? availableTriggers.find(t => t.id === triggerType.id) ?? null
+          : null;
+        if (matchedTrigger) setSelectedTrigger(matchedTrigger);
+
+        const triggerNode: Node = {
+          id: "1",
+          type: "custom",
+          data: {
+            label: triggerType?.name ?? "Select Trigger",
+            subtitle: "1. Trigger",
+            icon: triggerType?.image ?? "",
+            metadata: zap.trigger?.metadata ?? {},
+          },
+          position: { x: 250, y: 50 },
+          deletable: false,
+        };
+
+        // Hydrate action nodes in order
+        const sortedActions = [...(zap.actions ?? [])].sort(
+          (a, b) => a.sortingOrder - b.sortingOrder
+        );
+        const actionNodes: Node[] = sortedActions.map((action, index) => ({
+          id: `action-${action.id}`,
+          type: "custom",
+          data: {
+            label: action.type?.name ?? "Select Action",
+            subtitle: `${index + 2}. Action`,
+            icon: action.type?.image ?? "",
+            metadata: action.metadata ?? {},
+          },
+          position: { x: 250, y: 50 + (index + 1) * 200 },
+        }));
+
+        const allNodes: Node[] = [triggerNode, ...actionNodes];
+        setNodes(allNodes);
+
+        // Hydrate edges
+        const newEdges: Edge[] = [];
+        for (let i = 0; i < allNodes.length - 1; i++) {
+          newEdges.push({
+            id: `e${allNodes[i].id}-${allNodes[i + 1].id}`,
+            source: allNodes[i].id,
+            target: allNodes[i + 1].id,
+            type: "smoothstep",
+            animated: true,
+            style: { stroke: "#6366f1", strokeWidth: 2 },
+            markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
+          });
+        }
+        setEdges(newEdges);
+      })
+      .catch(err => {
+        if (!cancelled) {
+          console.error("Failed to load zap:", err);
+          toastError("Could not load zap data. Starting fresh.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingZap(false);
+      });
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialZapId, availableTriggers.length]);
 
   // --- TRAVERSAL & RENUMBERING ---
 
@@ -115,73 +202,70 @@ export function Canvas() {
     return sorted;
   }, []);
 
-  const refreshNodeLabels = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
-    const sorted = getSortedNodes(currentNodes, currentEdges);
+  const refreshNodeLabels = useCallback((_: Node[], currentEdges: Edge[]) => {
+    // We ignore currentNodes to ensure we never use a stale captured state 
+    // and always use the atomic 'nds' from the setNodes dispatcher.
+    setNodes(nds => {
+      const sorted = getSortedNodes(nds, currentEdges);
 
-    // Update subtitles with sequence numbers for all nodes in the path
-    const updates = sorted.map((node, index) => {
-      const type = index === 0 ? "Trigger" : "Action";
-      const isLast = index === sorted.length - 1;
-      return {
-        id: node.id,
-        data: {
-          ...node.data,
-          subtitle: `${index + 1}. ${type}`,
-          isLast: isLast,
-          onAddNext: (parentId: string) => {
-            // Logic to add next node
-            const parentNode = sorted.find(n => n.id === parentId);
-            if (!parentNode) return;
+      return nds.map((n) => {
+        const index = sorted.findIndex(s => s.id === n.id);
+        if (index === -1) return n; // Unconnected or orphan node
 
-            const newId = crypto.randomUUID();
-            const newNode: Node = {
-              id: newId,
-              position: { x: parentNode.position.x, y: parentNode.position.y + 200 }, // Offset Y
-              type: 'custom',
-              data: {
-                label: "Select Action",
-                subtitle: "Action",
-                icon: "",
-                metadata: {}
-              },
-              origin: nodeOrigin,
-            };
+        const type = index === 0 ? "Trigger" : "Action";
+        const isLast = index === sorted.length - 1;
+        const newSubtitle = `${index + 1}. ${type}`;
 
-            const newEdge: Edge = {
-              id: `e${parentId}-${newId}`,
-              source: parentId,
-              target: newId,
-              type: 'smoothstep',
-              animated: true,
-              style: { stroke: '#6366f1', strokeWidth: 2 },
-              markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
-            };
+        const hasChanges = n.data.subtitle !== newSubtitle || n.data.isLast !== isLast || !n.data.onAddNext;
 
-            setNodes((nds) => [...nds, newNode]);
-            setEdges((eds) => {
-              const updated = [...eds, newEdge];
-              setTimeout(() => refreshNodeLabels([...nodes, newNode], updated), 0);
-              return updated;
-            });
-          }
+        if (hasChanges) {
+          return {
+            ...n,
+            data: {
+              ...n.data, // preserve icon, label, etc. safely!
+              subtitle: newSubtitle,
+              isLast: isLast,
+              onAddNext: (parentId: string) => {
+                const newId = crypto.randomUUID();
+                setNodes(currentNs => {
+                  const parentNode = currentNs.find(pn => pn.id === parentId);
+                  if (!parentNode) return currentNs;
+
+                  const newNode: Node = {
+                    id: newId,
+                    position: { x: parentNode.position.x, y: parentNode.position.y + 200 },
+                    type: 'custom',
+                    data: {
+                      label: "Select Action",
+                      subtitle: "Action",
+                      icon: "",
+                      metadata: {}
+                    },
+                    origin: [0.5, 0], // nodeOrigin
+                  };
+                  return [...currentNs, newNode];
+                });
+
+                setEdges(currentEs => {
+                  const newEdge: Edge = {
+                    id: `e${parentId}-${newId}`,
+                    source: parentId,
+                    target: newId,
+                    type: 'smoothstep',
+                    animated: true,
+                    style: { stroke: '#6366f1', strokeWidth: 2 },
+                    markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
+                  };
+                  return [...currentEs, newEdge];
+                });
+              }
+            }
+          };
         }
-      };
+        return n;
+      });
     });
-
-    // Apply updates if changed
-    setNodes(nds => nds.map(n => {
-      const update = updates.find(u => u.id === n.id);
-      if (update) {
-        const hasChanges = update.data.subtitle !== n.data.subtitle || update.data.isLast !== n.data.isLast;
-        const hasFunction = !!n.data.onAddNext;
-
-        if (hasChanges || !hasFunction) {
-          return { ...n, data: { ...n.data, ...update.data } };
-        }
-      }
-      return n;
-    }));
-  }, [getSortedNodes, setNodes]);
+  }, [getSortedNodes, setNodes, setEdges]);
 
   // --- EVENT HANDLERS ---
 
@@ -364,12 +448,18 @@ export function Canvas() {
       setOpenSelectorModal(true);
     } else {
       if (node.id === "1") {
-        setOpenSelectorModal(true);
+        const trigger = availableTriggers.find(t => t.name === label);
+        if (trigger) {
+          setSelectedTrigger(trigger);
+          setTriggerConfigOpen(true);
+        } else {
+          setOpenSelectorModal(true);
+        }
       } else {
         const action = availableActions.find(a => a.name === label);
         if (action) {
           setSelectedAction(action);
-          setConfigModal(true);
+          setActionConfigOpen(true);
         } else {
           setOpenSelectorModal(true);
         }
@@ -387,7 +477,7 @@ export function Canvas() {
     setConfigModal(false);
   };
 
-  const handleSelectComponent = (item: Trigger | Action, type: 'trigger' | 'action') => {
+  const handleSelectComponent = async (item: Trigger | Action, type: 'trigger' | 'action') => {
     setNodes(nds => nds.map(n => {
       if (n.id === activeNodeId) {
         return {
@@ -404,9 +494,35 @@ export function Canvas() {
     }));
     setOpenSelectorModal(false);
 
+    if (type === 'trigger') {
+      setSelectedTrigger(item as Trigger);
+
+      // Auto-save zap if it isn't saved yet
+      if (!zapId) {
+        try {
+          const res = await api.post<{ zapId: string }>(API_ROUTES.ZAP.CREATE, {
+            availableTriggerId: item.id,
+            triggerMetadata: {},
+            name: zapName,
+            actions: []
+          });
+          const newZapId = res.zapId;
+          if (newZapId) {
+            setZapId(newZapId);
+            window.history.replaceState(null, '', `/zap/${newZapId}`);
+            toastSuccess("Zap saved automatically!");
+          }
+        } catch (e) {
+          console.error(e);
+          toastError("Could not auto-save Zap. You may need to publish manually.");
+        }
+      }
+      setTriggerConfigOpen(true);
+    }
+
     if (type === 'action') {
       setSelectedAction(item as Action);
-      setConfigModal(true);
+      setActionConfigOpen(true);
     }
   };
 
@@ -414,20 +530,20 @@ export function Canvas() {
     // 1. Traverse strictly from Root
     const sortedNodes = getSortedNodes(nodes, edges);
     if (sortedNodes.length < 2) {
-      alert("Zap must have at least a trigger and one action.");
+      toastWarning("Zap must have at least a trigger and one action.");
       return;
     }
 
     const triggerNode = sortedNodes[0];
     if ((triggerNode.data.label as string).startsWith("Select")) {
-      alert("Please configure the trigger.");
+      toastWarning("Please configure the trigger.");
       return;
     }
 
     const triggerName = triggerNode.data.label as string;
     const trigger = availableTriggers.find(t => t.name === triggerName);
     if (!trigger) {
-      alert("Invalid trigger configuration.");
+      toastError("Invalid trigger configuration.");
       return;
     }
 
@@ -439,36 +555,58 @@ export function Canvas() {
 
       return {
         availableActionId: action.id,
-        sortingOrder: index, // 0-based index for actions
+        sortingOrder: index,
         actionMetadata: n.data.metadata || {},
       };
     }).filter(Boolean);
 
     if (actions.length === 0) {
-      alert("Please add at least one valid action.");
+      toastWarning("Please add at least one valid action.");
       return;
     }
 
     try {
-      await axios.post(`${BACKEND_URL}/api/v1/zap/create`, {
-        availableTriggerId: trigger.id,
-        triggerMetadata: {},
-        name: zapName,
-        actions,
-      }, {
-        headers: { Authorization: localStorage.getItem("token") || "" },
-      });
+      if (zapId) {
+        // Update existing zap with new actions
+        await api.put<any>(API_ROUTES.ZAP.UPDATE(zapId), {
+          availableTriggerId: trigger.id,
+          triggerMetadata: {},
+          name: zapName,
+          actions,
+        });
+        toastSuccess("Zap updated successfully!");
+      } else {
+        // Create new zap from scratch
+        await api.post<any>(API_ROUTES.ZAP.CREATE, {
+          availableTriggerId: trigger.id,
+          triggerMetadata: {},
+          name: zapName,
+          actions,
+        });
+        toastSuccess("Zap published successfully!");
+      }
 
       router.push("/dashboard");
     } catch (err) {
       console.error(err);
-      alert("Failed to publish zap.");
+      toastError("Failed to publish zap. Please try again.");
     }
   };
 
   return (
     <div className="flex flex-col h-full w-full">
       <TopBar handlePublish={handlePublish} zapName={zapName} setZapName={setZapName} />
+
+      {/* Loading overlay while fetching existing zap data */}
+      {loadingZap && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/80 dark:bg-slate-950/80 backdrop-blur-sm">
+          <svg className="animate-spin w-10 h-10 text-indigo-600 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+          </svg>
+          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Loading zap…</p>
+        </div>
+      )}
 
       <div className="flex flex-1 h-full relative">
         <SideBar />
@@ -528,27 +666,38 @@ export function Canvas() {
         </Modal>
       )}
 
-      {openConfigModal && selectedAction && (
-        <Modal onClose={() => setConfigModal(false)} title={`Configure ${selectedAction.name}`}>
-          {selectedAction.name === "email" && <EmailSelector setMetadata={updateNodeMetadata} />}
-          {selectedAction.name === "Solana" && <SolanaSelector setMetadata={updateNodeMetadata} />}
-          {selectedAction.name === "Google Calender" && <GoogleCalendarSelector setMetadata={updateNodeMetadata} />}
-          {selectedAction.name === "Google Sheet" && <GoogleSheetSelector setMetadata={updateNodeMetadata} />}
-          {selectedAction.name === "Gemini" && <GeminiSelector setMetadata={updateNodeMetadata} />}
-          {selectedAction.name === "Notion" && <NotionSelector setMetadata={updateNodeMetadata} />}
-          {selectedAction.name === "Slack" && <SlackSelector setMetadata={updateNodeMetadata} />}
-          {selectedAction.name === "Discord" && <DiscordSelector setMetadata={updateNodeMetadata} />}
 
-          {!["email", "Solana", "Google Calender", "Google Sheet", "Gemini", "Notion", "Slack", "Discord"].includes(selectedAction.name) && (
-            <div className="text-center py-8 text-slate-500">
-              No configuration needed for this action.
-              <div className="mt-4">
-                <button onClick={() => updateNodeMetadata({})} className="px-4 py-2 bg-primary-600 text-white rounded-lg">Save & Close</button>
-              </div>
-            </div>
-          )}
-        </Modal>
-      )}
+
+      {/* Trigger Configuration Sidebar */}
+      <ConfigurationSidebar
+        isOpen={triggerConfigOpen}
+        onClose={() => setTriggerConfigOpen(false)}
+        selectedNodeId={activeNodeId}
+        selectedAction={null}
+        selectedTrigger={selectedTrigger}
+        updateNodeMetadata={updateNodeMetadata}
+        zapId={zapId || undefined}
+        nodes={nodes}
+        triggerSampleFields={triggerSampleFields}
+        onTriggerSampleFields={setTriggerSampleFields}
+      />
+
+      {/* Action Configuration Sidebar */}
+      <ConfigurationSidebar
+        isOpen={actionConfigOpen}
+        onClose={() => setActionConfigOpen(false)}
+        selectedNodeId={activeNodeId}
+        selectedAction={selectedAction}
+        selectedTrigger={null}
+        updateNodeMetadata={updateNodeMetadata}
+        zapId={zapId || undefined}
+        nodes={nodes}
+        triggerSampleFields={triggerSampleFields}
+        onChangeAction={() => {
+          setActionConfigOpen(false);
+          setOpenSelectorModal(true);
+        }}
+      />
 
     </div>
   );

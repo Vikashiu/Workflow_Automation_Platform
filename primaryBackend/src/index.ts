@@ -8,69 +8,68 @@ import { oauth2callbackRouter } from "./routes/oauth2callbackRouter";
 import { notionOauth } from "./routes/notionOauth";
 import { googleApiRoute } from "./routes/googleApiRoutes";
 import { authMiddleware } from "./authMiddleware";
-const { google } = require("googleapis");
 
 require("dotenv").config();
+
+const { google } = require("googleapis");
 
 const app = express();
 
 app.use(express.json());
 app.use(cors());
 
-app.use("/oauth2callback", oauth2callbackRouter)
-
+// ─── Routes ──────────────────────────────────────────────────────────────────
+app.use("/oauth2callback", oauth2callbackRouter);
 app.use("/api/v1/user", userRouter);
 app.use("/api/v1/zap", zapRouter);
-
 app.use("/api/v1/trigger", triggerRouter);
 app.use("/api/v1/action", actionRouter);
+app.use("/api/oauth/notion", notionOauth);
+app.use("/api/v1/google", googleApiRoute);
 
-app.use("/api/oauth/notion", notionOauth)
-app.use("/api/v1/google", googleApiRoute)
-
+// ─── Google OAuth URL generation ─────────────────────────────────────────────
 const oauth2Client = new google.auth.OAuth2(
   process.env.CLIENT_ID,
   process.env.CLIENT_SECRET,
   process.env.REDIRECT_URI
 );
 
-app.get("/auth",authMiddleware, (req, res) => {
-  // @ts-ignore
+app.get("/auth", authMiddleware, (req: any, res: any) => {
   const userId = req.id;
   const url = oauth2Client.generateAuthUrl({
     access_type: "offline",
-    prompt: 'consent',
+    prompt: "consent",
     scope: [
       "https://www.googleapis.com/auth/calendar",
       "https://www.googleapis.com/auth/spreadsheets",
-      'https://www.googleapis.com/auth/drive.readonly'
-
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.file",
     ],
     state: JSON.stringify({ userId }),
   });
-  res.json({url});
+  res.json({ url });
 });
 
-// app.get("/oauth2callback", async (req, res) => {
-//   const { code } = req.query;
-//   console.log(code);
-//   const { tokens } = await oauth2Client.getToken(code);
-//   oauth2Client.setCredentials(tokens);
+// ─── Global error handler (keeps Express from crashing on route errors) ───────
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("❌ Unhandled Express error:", err?.message || err);
+  if (!res.headersSent) {
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
 
-//   // Save these tokens somewhere securely
-//   console.log("Tokens:", tokens);
+// ─── Process-level crash guards ───────────────────────────────────────────────
+// These prevent the server from exiting on unhandled errors
+process.on("uncaughtException", (err) => {
+  console.error("❌ Uncaught Exception (server kept alive):", err);
+});
 
-//   res.send("OAuth complete. Check server console.");
-// });
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ Unhandled Promise Rejection (server kept alive):", reason);
+});
 
-// app.post("/webhook", express.json(), (req, res) => {
-//   console.log("📨 Google sent a notification!");
-//   console.log("Headers:", req.headers);
-//   res.sendStatus(200);
-// });
-
-
-
-app.listen(3000, () => {
-    console.log("listening at 3000");
-})
+// ─── Start ────────────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`✅ Primary backend listening on port ${PORT}`);
+});

@@ -24,15 +24,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Initialize auth state from token
     useEffect(() => {
-        const initAuth = () => {
+        const initAuth = async () => {
             try {
                 // Only access localStorage on client side
                 if (typeof window !== "undefined") {
                     const token = localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
                     if (token) {
-                        // In a real app, you'd validate the token with the backend
-                        // For now, we'll just mark as authenticated
-                        // setUser({ ... }) - would come from token decode or API call
+                        try {
+                            const res = await api.get<{ user: User }>(API_ROUTES.USER.ME);
+                            if (res && res.user) {
+                                setUser(res.user);
+                            } else {
+                                localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+                            }
+                        } catch (e) {
+                            console.error("Token validation failed:", e);
+                            localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+                        }
                     }
                 }
             } catch (error) {
@@ -103,7 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signin,
         signup,
         signout,
-        isAuthenticated: !!user || (typeof window !== "undefined" && !!localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN)),
+        isAuthenticated: !!user,
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -128,19 +136,23 @@ export function withAuth<P extends object>(
         const router = useRouter();
 
         useEffect(() => {
+            // Only redirect if we've finished checking token validity and definitely aren't authenticated
             if (!loading && !isAuthenticated) {
                 router.push(ROUTES.SIGNIN);
             }
         }, [isAuthenticated, loading, router]);
 
+        // Show loading spinner while AuthContext runs its initial check against /api/v1/user
         if (loading) {
             return (
-                <div className="flex items-center justify-center min-h-screen">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600"></div>
+                <div className="flex flex-col gap-4 items-center justify-center min-h-screen bg-slate-50 dark:bg-slate-950">
+                    <div className="w-10 h-10 border-4 border-slate-200 border-t-slate-800 dark:border-slate-800 dark:border-t-slate-200 rounded-full animate-spin"></div>
+                    <p className="text-slate-500 font-medium">Loading workspace...</p>
                 </div>
             );
         }
 
+        // Failsafe to prevent flashing the protected component before redirect takes over
         if (!isAuthenticated) {
             return null;
         }

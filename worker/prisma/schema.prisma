@@ -26,6 +26,7 @@ model Zap {
   name      String   @default("Untitled")
   TriggerId String
   userId    Int
+  isEnabled Boolean  @default(true)
   trigger   Trigger?
   actions   Action[]
   zapRun    ZapRun[]
@@ -72,6 +73,7 @@ model ZapRun {
   metadata      Json          @default("{}")          // DEPRECATED: Left for compatibility
   payload       Json          @default("{}")          // Actual webhook event payload from trigger
   status        String        @default("pending")     // pending | running | completed | failed
+  retryCount    Int           @default(0)             // Number of retry attempts made
   createdAt     DateTime      @default(now())
   zap           Zap           @relation(fields: [zapId], references: [id])
   zapRunOutbox  ZapRunOutbox?

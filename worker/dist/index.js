@@ -11,28 +11,21 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", { value: true });
 const kafkajs_1 = require("kafkajs");
 const client_1 = require("@prisma/client");
-const email_1 = require("./utils/email");
-const google_sheet_1 = require("./utils/google_sheet");
-const google_calender_1 = require("./utils/google_calender");
-const notion_1 = require("./utils/notion");
-const gemini_1 = require("./utils/gemini");
-const slack_1 = require("./utils/slack");
-const discord_1 = require("./utils/discord");
+const registry_1 = require("./registry");
 require('dotenv').config();
 const TOPIC_NAME = "zap-events";
+const KAFKA_BROKERS = (process.env.KAFKA_BROKERS || "localhost:9092").split(",");
+// ─── Retry configuration ───────────────────────────────────────────────────
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 1000; // 1s, 2s, 4s (exponential backoff)
 const prismaClient = new client_1.PrismaClient();
 const kafka = new kafkajs_1.Kafka({
     clientId: 'outbox-processor',
-    brokers: ['localhost:9092']
+    brokers: KAFKA_BROKERS
 });
 /**
- * Resolves template strings and values using actual payload data
- * Replaces {{dot.path}} placeholders with actual values from payload
- * Safe: returns empty string if field doesn't exist, never throws
- *
- * @example
- * resolveTemplate("Hello {{user.name}}", { user: { name: "John" } })
- * // Returns: "Hello John"
+ * Resolves template strings using actual payload data.
+ * Replaces {{dot.path}} placeholders with values from payload.
  */
 function resolveTemplate(str, payload) {
     if (!str || typeof str !== "string")
@@ -52,20 +45,13 @@ function resolveTemplate(str, payload) {
     });
 }
 /**
- * Recursively resolves all template strings in an object
- * Processes nested objects and arrays
- *
- * @param obj - Object with potential template strings
- * @param payload - Data to resolve templates against
- * @returns Object with all templates resolved
+ * Recursively resolves all template strings in an object.
  */
 function resolveTemplatesInObject(obj, payload) {
-    if (typeof obj === "string") {
+    if (typeof obj === "string")
         return resolveTemplate(obj, payload);
-    }
-    if (Array.isArray(obj)) {
-        return obj.map((item) => resolveTemplatesInObject(item, payload));
-    }
+    if (Array.isArray(obj))
+        return obj.map(item => resolveTemplatesInObject(item, payload));
     if (obj !== null && typeof obj === "object") {
         const resolved = {};
         for (const key in obj) {
@@ -78,157 +64,185 @@ function resolveTemplatesInObject(obj, payload) {
     return obj;
 }
 /**
- * Merges actual webhook payload with previous action results
- * Used as context for template resolution
- *
- * @param zapRunPayload - Original webhook payload
- * @param zapRunMetadata - Accumulated results from previous actions
- * @returns Combined context object
+ * Merges webhook payload with previous action results for template resolution.
  */
 function buildExecutionContext(zapRunPayload, zapRunMetadata) {
     return Object.assign(Object.assign({}, zapRunPayload), (zapRunMetadata || {}));
 }
+/**
+ * Sleeps for ms milliseconds.
+ */
+function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+}
+/**
+ * Executes a single action with exponential-backoff retry.
+ * Throws after MAX_RETRIES if all attempts fail.
+ */
+function executeActionWithRetry(actionTypeName, actionTypeId, resolvedMetadata, zapRunId, stage, userId) {
+    return __awaiter(this, void 0, void 0, function* () {
+        let lastError;
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                const plugin = registry_1.ActionRegistry.get(actionTypeId);
+                if (!plugin) {
+                    console.log(`⚠️  Unknown action type: "${actionTypeId}" — skipping`);
+                    return null;
+                }
+                // Execute the loosely-coupled plugin logic
+                const result = yield plugin.execute(resolvedMetadata, userId);
+                // Track retry count on success if this wasn't the first attempt
+                if (attempt > 1) {
+                    yield prismaClient.zapRun.update({
+                        where: { id: zapRunId },
+                        data: { retryCount: attempt - 1 }
+                    });
+                    console.log(`✅ Action "${actionTypeId}" succeeded on attempt ${attempt}`);
+                }
+                return result; // Success — exit retry loop
+            }
+            catch (err) {
+                lastError = err;
+                const backoff = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+                console.warn(`⚠️  Action "${actionTypeId}" failed on attempt ${attempt}/${MAX_RETRIES}. ` +
+                    `Retrying in ${backoff}ms...`, err);
+                if (attempt < MAX_RETRIES) {
+                    yield sleep(backoff);
+                }
+            }
+        }
+        // All retries exhausted
+        throw lastError;
+    });
+}
+// Deleted giant executeAction switch block as it's now handled smoothly via ActionRegistry
 function main() {
     return __awaiter(this, void 0, void 0, function* () {
         const producer = kafka.producer();
         yield producer.connect();
         const consumer = kafka.consumer({ groupId: 'main-worker' });
         yield consumer.connect();
-        console.log("✅ Worker started - listening for zap events");
+        console.log("✅ Worker started — listening for zap events");
         yield consumer.subscribe({ topic: TOPIC_NAME, fromBeginning: true });
         yield consumer.run({
             autoCommit: false,
             eachMessage: (_a) => __awaiter(this, [_a], void 0, function* ({ topic, partition, message }) {
-                var _b, _c, _d, _e;
+                var _b, _c, _d;
                 try {
-                    console.log({
-                        partition,
-                        offset: message.offset,
-                        value: (_b = message.value) === null || _b === void 0 ? void 0 : _b.toString(),
-                    });
-                    if (!((_c = message.value) === null || _c === void 0 ? void 0 : _c.toString())) {
+                    if (!((_b = message.value) === null || _b === void 0 ? void 0 : _b.toString()))
                         return;
-                    }
-                    const parsedValue = JSON.parse((_d = message.value) === null || _d === void 0 ? void 0 : _d.toString());
+                    const parsedValue = JSON.parse(message.value.toString());
                     const zapRunId = parsedValue.zapRunId;
                     const stage = parsedValue.stage;
+                    console.log(`📨 Processing zapRunId=${zapRunId} stage=${stage}`);
                     const zapRunDetails = yield prismaClient.zapRun.findFirst({
-                        where: {
-                            id: zapRunId
-                        },
+                        where: { id: zapRunId },
                         include: {
                             zap: {
                                 include: {
-                                    actions: {
-                                        include: {
-                                            type: true
-                                        }
-                                    }
+                                    actions: { include: { type: true } }
                                 }
                             }
                         }
                     });
                     if (!zapRunDetails) {
-                        console.error("Zap run not found:", zapRunId);
+                        console.error("❌ Zap run not found:", zapRunId);
                         return;
                     }
-                    const currentAction = zapRunDetails.zap.actions.find((x) => x.sortingOrder === stage);
+                    // ── Skip disabled zaps ────────────────────────────────────
+                    if (!zapRunDetails.zap.isEnabled) {
+                        console.log(`⏭️  Zap is disabled — skipping zapRunId: ${zapRunId}`);
+                        yield prismaClient.zapRun.update({
+                            where: { id: zapRunId },
+                            data: { status: 'failed' }
+                        });
+                        yield consumer.commitOffsets([{
+                                topic: TOPIC_NAME,
+                                partition,
+                                offset: (parseInt(message.offset) + 1).toString()
+                            }]);
+                        return;
+                    }
+                    const currentAction = zapRunDetails.zap.actions.find(x => x.sortingOrder === stage);
                     if (!currentAction) {
-                        console.log("🛑 Current action not found for stage:", stage);
+                        console.log("🛑 No action found for stage:", stage);
                         return;
                     }
-                    // Get actual webhook payload (or fallback to metadata for compatibility)
+                    // Mark as running on first stage
+                    if (stage === 0) {
+                        yield prismaClient.zapRun.update({
+                            where: { id: zapRunId },
+                            data: { status: 'running' }
+                        });
+                    }
                     const webhookPayload = typeof zapRunDetails.payload === "string"
                         ? JSON.parse(zapRunDetails.payload)
                         : (zapRunDetails.payload || {});
                     const zapRunMetadata = typeof zapRunDetails.metadata === "string"
                         ? JSON.parse(zapRunDetails.metadata)
                         : (zapRunDetails.metadata || {});
-                    // Build execution context: combine webhook payload + previous action results
                     const executionContext = buildExecutionContext(webhookPayload, zapRunMetadata);
-                    // Deep resolve all templates in action metadata using actual payload
                     const resolvedMetadata = resolveTemplatesInObject(currentAction.metadata, executionContext);
-                    console.log(`📋 Action ${stage}: ${currentAction.type.name}`, {
-                        original: currentAction.metadata,
+                    const userId = zapRunDetails.zap.userId.toString();
+                    console.log(`📋 Stage ${stage}: ${currentAction.type.name}`, {
                         resolved: resolvedMetadata
                     });
-                    // Execute based on action type
-                    if (currentAction.type.id === "Slack") {
-                        const { webhookUrl, message } = resolvedMetadata;
-                        console.log("💬 Sending Slack message");
-                        yield (0, slack_1.sendSlackMessage)(webhookUrl, message);
-                    }
-                    if (currentAction.type.id === "Discord") {
-                        const { webhookUrl, content } = resolvedMetadata;
-                        console.log("🎮 Sending Discord message");
-                        yield (0, discord_1.sendDiscordMessage)(webhookUrl, content);
-                    }
-                    if (currentAction.type.id === "email") {
-                        console.log("📧 Sending email");
-                        const { email, subject, body } = resolvedMetadata;
-                        yield (0, email_1.sendEmail)({
-                            email: email,
-                            body: body,
-                            subject: subject
-                        });
-                    }
-                    if (currentAction.type.id === "Google Sheet") {
-                        console.log("📊 Appending to Google Sheet");
-                        yield (0, google_sheet_1.appendRow)(zapRunDetails.zap.userId.toString() || "", resolvedMetadata);
-                    }
-                    if (currentAction.type.id === "Google_Calendar") {
-                        console.log("📅 Creating Google Calendar event");
-                        yield (0, google_calender_1.createCalendarEvent)(zapRunDetails.zap.userId.toString() || "", resolvedMetadata);
-                    }
-                    if (currentAction.type.id === "Notion") {
-                        console.log("📝 Creating Notion Page");
-                        yield (0, notion_1.appendNotionRow)(zapRunDetails.zap.userId.toString() || "", resolvedMetadata);
-                    }
-                    if (currentAction.type.id === "Gemini") {
-                        console.log("🤖 Asking Gemini...");
-                        const prompt = resolvedMetadata.prompt;
-                        const result = yield (0, gemini_1.generateGeminiContent)(prompt);
-                        console.log("✨ Gemini Output:", result);
-                        const output = result || "";
+                    // ── Execute with retry through standard Plugin interface ──
+                    const output = yield executeActionWithRetry(currentAction.type.name, currentAction.type.id, resolvedMetadata, zapRunId, stage, userId);
+                    // If plugin returned data (like Gemini text output), implicitly store it in metadata
+                    if (output) {
                         const stageKey = `action_${currentAction.sortingOrder}`;
-                        const newMetadata = Object.assign(Object.assign({}, zapRunMetadata), { [stageKey]: { output } });
                         yield prismaClient.zapRun.update({
                             where: { id: zapRunId },
-                            data: { metadata: newMetadata }
+                            data: { metadata: Object.assign(Object.assign({}, zapRunMetadata), { [stageKey]: { output } }) }
                         });
                     }
                     // Small delay to prevent thundering herd
-                    yield new Promise(r => setTimeout(r, 100));
-                    const lastStage = (((_e = zapRunDetails.zap.actions) === null || _e === void 0 ? void 0 : _e.length) || 1) - 1;
-                    // Queue next action if not the last one
-                    if (lastStage !== stage) {
+                    yield sleep(100);
+                    const lastStage = (((_c = zapRunDetails.zap.actions) === null || _c === void 0 ? void 0 : _c.length) || 1) - 1;
+                    if (stage < lastStage) {
                         console.log(`⏭️  Queueing next stage: ${stage + 1}`);
                         yield producer.send({
                             topic: TOPIC_NAME,
-                            messages: [{
-                                    value: JSON.stringify({
-                                        stage: stage + 1,
-                                        zapRunId
-                                    })
-                                }]
+                            messages: [{ value: JSON.stringify({ stage: stage + 1, zapRunId }) }]
                         });
                     }
                     else {
-                        console.log(`✅ Zap execution completed for zapRunId: ${zapRunId}`);
+                        console.log(`✅ Zap run completed: ${zapRunId}`);
+                        yield prismaClient.zapRun.update({
+                            where: { id: zapRunId },
+                            data: { status: 'completed' }
+                        });
                     }
-                    // Commit offset
                     yield consumer.commitOffsets([{
                             topic: TOPIC_NAME,
-                            partition: partition,
+                            partition,
                             offset: (parseInt(message.offset) + 1).toString()
                         }]);
                 }
                 catch (error) {
-                    console.error("❌ Error processing message:", error);
-                    // Commit offset even on error to avoid stuck messages
+                    console.error("❌ Fatal error processing message:", error);
+                    try {
+                        const parsedValue = message.value ? JSON.parse(message.value.toString()) : null;
+                        if (parsedValue === null || parsedValue === void 0 ? void 0 : parsedValue.zapRunId) {
+                            const currentRetry = yield prismaClient.zapRun.findFirst({
+                                where: { id: parsedValue.zapRunId },
+                                select: { retryCount: true }
+                            });
+                            yield prismaClient.zapRun.update({
+                                where: { id: parsedValue.zapRunId },
+                                data: {
+                                    status: 'failed',
+                                    retryCount: ((_d = currentRetry === null || currentRetry === void 0 ? void 0 : currentRetry.retryCount) !== null && _d !== void 0 ? _d : 0) + MAX_RETRIES
+                                }
+                            });
+                        }
+                    }
+                    catch ( /* ignore secondary error */_e) { /* ignore secondary error */ }
+                    // Commit to avoid infinite re-processing of poison pill messages
                     yield consumer.commitOffsets([{
                             topic: TOPIC_NAME,
-                            partition: partition,
+                            partition,
                             offset: (parseInt(message.offset) + 1).toString()
                         }]);
                 }

@@ -1,11 +1,13 @@
 "use client"
 
-import axios from "axios";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { BACKEND_URL, HOOKS_URL } from "../config";
+import { HOOKS_URL } from "@/lib/constants";
 import { Button } from "@/component/ui/Button";
+import { api } from "@/lib/api-client";
+import { API_ROUTES } from "@/lib/constants";
+import { withAuth } from "@/contexts/AuthContext";
 
 // --- Delete Confirmation Modal ---
 
@@ -140,62 +142,60 @@ const ArrowRightIcon = () => (
 
 type Zap = {
     id: string;
-    name?: string; // Optional user-defined name
+    name?: string;
     TriggerId: string;
     userId: number;
     createdAt: string;
+    isEnabled: boolean;
     actions: {
         id: string;
         zapId: string;
         ActionId: string;
         metadata: Record<string, any>;
-        type: {
-            id: string;
-            name: string;
-            image: string;
-        };
+        type: { id: string; name: string; image: string };
     }[];
     trigger: {
         id: string;
         zapId: string;
         TriggerId: string;
         metadata: Record<string, any>;
-        type: {
-            id: string;
-            name: string;
-            image: string;
-        };
+        type: { id: string; name: string; image: string };
     };
 };
 
 type GetAllZapResponse = {
     zaps: Zap[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
 };
 
 // --- Custom Hook for Data Fetching ---
+
+const PAGE_SIZE = 9;
 
 function useZaps() {
     const [loading, setLoading] = useState(true);
     const [zaps, setZaps] = useState<Zap[]>([]);
     const [error, setError] = useState<string | null>(null);
+    const [page, setPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(1);
+    const [total, setTotal] = useState(0);
 
-    const fetchZaps = useCallback(async () => {
-        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-        if (!token) {
-            setLoading(false);
-            setError("auth");
-            return;
-        }
+    const fetchZaps = useCallback(async (p: number = 1) => {
         setError(null);
         setLoading(true);
         try {
-            const res = await axios.get<GetAllZapResponse>(`${BACKEND_URL}/api/v1/zap/user`, {
-                headers: { authorization: token }
-            });
-            setZaps(Array.isArray(res.data?.zaps) ? res.data.zaps : []);
-        } catch (err: unknown) {
-            const res = err && typeof err === "object" && "response" in err ? (err as { response?: { status?: number } }).response : undefined;
-            const status = res?.status ?? null;
+            const res = await api.get<GetAllZapResponse>(
+                `${API_ROUTES.ZAP.GET_ALL}?page=${p}&limit=${PAGE_SIZE}`
+            );
+            setZaps(Array.isArray(res.zaps) ? res.zaps : []);
+            setTotalPages(res.totalPages ?? 1);
+            setTotal(res.total ?? 0);
+            setPage(p);
+        } catch (err: any) {
+            const status = err?.response?.status;
             if (status === 401 || status === 403) {
                 if (typeof window !== "undefined") localStorage.removeItem("token");
                 setError("auth");
@@ -208,11 +208,9 @@ function useZaps() {
         }
     }, []);
 
-    useEffect(() => {
-        fetchZaps();
-    }, [fetchZaps]);
+    useEffect(() => { fetchZaps(1); }, [fetchZaps]);
 
-    return { loading, zaps, setZaps, error, retry: fetchZaps };
+    return { loading, zaps, setZaps, error, retry: () => fetchZaps(page), page, totalPages, total, goToPage: fetchZaps };
 }
 
 // --- Dashboard Navbar (authenticated) ---
@@ -262,18 +260,24 @@ function DashboardNavbar() {
 
 // --- Main Dashboard Component ---
 
-export default function DashboardPage() {
-    const { loading, zaps, setZaps, error, retry } = useZaps();
+function DashboardPage() {
+    const { loading, zaps, setZaps, error, retry, page, totalPages, total, goToPage } = useZaps();
     const router = useRouter();
 
     const handleDelete = useCallback(async (zapId: string) => {
-        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-        if (!token) throw new Error("Not authenticated");
-        await axios.delete(`${BACKEND_URL}/api/v1/zap/${zapId}`, {
-            headers: { authorization: token }
-        });
-        // Remove from local state after successful delete
+        await api.delete(API_ROUTES.ZAP.DELETE(zapId));
         setZaps(prev => prev.filter(z => z.id !== zapId));
+    }, [setZaps]);
+
+    const handleToggle = useCallback(async (zapId: string, current: boolean) => {
+        // Optimistic update
+        setZaps(prev => prev.map(z => z.id === zapId ? { ...z, isEnabled: !current } : z));
+        try {
+            await api.patch(API_ROUTES.ZAP.TOGGLE(zapId), { isEnabled: !current });
+        } catch {
+            // Revert on failure
+            setZaps(prev => prev.map(z => z.id === zapId ? { ...z, isEnabled: current } : z));
+        }
     }, [setZaps]);
 
     useEffect(() => {
@@ -298,7 +302,7 @@ export default function DashboardPage() {
                             My Zaps
                         </h1>
                         <p className="text-slate-500 dark:text-slate-400 mt-2">
-                            Manage and monitor your automated workflows.
+                            {total > 0 ? `${total} workflow${total !== 1 ? 's' : ''} total` : 'Manage and monitor your automated workflows.'}
                         </p>
                     </div>
                     <Button
@@ -319,16 +323,45 @@ export default function DashboardPage() {
                 )}
 
                 <DeploymentInfoBar />
-
                 <ConnectionsWidget />
-
                 <RecentActivityWidget />
 
-                {loading ? <SkeletonLoader /> : <ZapGrid zaps={zaps} onDelete={handleDelete} />}
+                {loading ? <SkeletonLoader /> : (
+                    <>
+                        <ZapGrid zaps={zaps} onDelete={handleDelete} onToggle={handleToggle} />
+
+                        {/* Pagination controls */}
+                        {totalPages > 1 && (
+                            <div className="mt-8 flex items-center justify-center gap-3">
+                                <button
+                                    onClick={() => goToPage(page - 1)}
+                                    disabled={page <= 1}
+                                    className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    ← Previous
+                                </button>
+                                <span className="text-sm text-slate-500 dark:text-slate-400 font-medium tabular-nums">
+                                    Page {page} of {totalPages}
+                                </span>
+                                <button
+                                    onClick={() => goToPage(page + 1)}
+                                    disabled={page >= totalPages}
+                                    className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    Next →
+                                </button>
+                            </div>
+                        )}
+                    </>
+                )}
             </div>
         </div>
     );
 }
+
+// Re-export wrapped with auth guard — unauthenticated users are sent to /signin
+// We reassign the default export after declaration (Next.js App Router compatible)
+
 
 // --- Connections Widget ---
 
@@ -342,14 +375,9 @@ function ConnectionsWidget() {
     const [loading, setLoading] = useState(true);
 
     const fetchConnections = async () => {
-        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-        if (!token) return;
         try {
-            const res = await axios.get<ConnectionStatus>(
-                `${BACKEND_URL}/api/v1/user/connections`,
-                { headers: { authorization: token } }
-            );
-            setStatus(res.data);
+            const data = await api.get<ConnectionStatus>(API_ROUTES.USER.CONNECTIONS);
+            setStatus(data);
         } catch {
             // silently fail
         } finally {
@@ -360,21 +388,16 @@ function ConnectionsWidget() {
     useEffect(() => { fetchConnections(); }, []);
 
     const connectGoogle = async () => {
-        const token = localStorage.getItem("token");
-        if (!token) return;
         try {
-            const res = await axios.get<{ url: string }>(`${BACKEND_URL}/auth`, {
-                headers: { authorization: token }
-            });
-            window.location.href = res.data.url;
+            const res = await api.get<{ url: string }>(API_ROUTES.USER.GOOGLE_AUTH);
+            window.location.href = res.url;
         } catch { /* ignore */ }
     };
 
-    const connectNotion = async () => {
+    const connectNotion = () => {
         const token = localStorage.getItem("token");
         if (!token) return;
-        // Notion OAuth redirect is handled server-side
-        window.location.href = `${BACKEND_URL}/api/oauth/notion?authorization=${token}`;
+        window.location.href = `${API_ROUTES.USER.NOTION_AUTH}?authorization=${token}`;
     };
 
     const integrations = [
@@ -519,16 +542,13 @@ function RecentActivityWidget() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-        if (!token) return;
         (async () => {
             try {
-                const res = await axios.get<{ runs: RunEntry[]; total: number }>(
-                    `${BACKEND_URL}/api/v1/zap/runs/all?page=1&limit=3`,
-                    { headers: { authorization: token } }
+                const res = await api.get<{ runs: RunEntry[]; total: number }>(
+                    API_ROUTES.ZAP.GET_ALL_RUNS(1, 3)
                 );
-                setRuns(res.data.runs ?? []);
-                setTotal(res.data.total ?? 0);
+                setRuns(res.runs ?? []);
+                setTotal(res.total ?? 0);
             } catch {
                 // silently fail — widget is non-critical
             } finally {
@@ -586,9 +606,9 @@ function RecentActivityWidget() {
                     {runs.map(run => (
                         <div key={run.id} className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                             <div className={`w-2 h-2 rounded-full shrink-0 ${run.status === "completed" ? "bg-emerald-500" :
-                                    run.status === "running" ? "bg-blue-500 animate-pulse" :
-                                        run.status === "failed" ? "bg-red-500" :
-                                            "bg-slate-300 animate-pulse"
+                                run.status === "running" ? "bg-blue-500 animate-pulse" :
+                                    run.status === "failed" ? "bg-red-500" :
+                                        "bg-slate-300 animate-pulse"
                                 }`} />
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
@@ -661,7 +681,11 @@ function DeploymentInfoBar() {
 
 // --- Zap Grid Component ---
 
-function ZapGrid({ zaps, onDelete }: { zaps: Zap[]; onDelete: (id: string) => Promise<void> }) {
+function ZapGrid({ zaps, onDelete, onToggle }: {
+    zaps: Zap[];
+    onDelete: (id: string) => Promise<void>;
+    onToggle: (id: string, current: boolean) => Promise<void>;
+}) {
     const router = useRouter();
 
     if (zaps.length === 0) {
@@ -670,25 +694,29 @@ function ZapGrid({ zaps, onDelete }: { zaps: Zap[]; onDelete: (id: string) => Pr
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {zaps.map(zap => <ZapCard key={zap.id} zap={zap} onDelete={onDelete} />)}
+            {zaps.map(zap => <ZapCard key={zap.id} zap={zap} onDelete={onDelete} onToggle={onToggle} />)}
         </div>
     );
 }
 
 // --- Single Zap Card Component ---
 
-function ZapCard({ zap, onDelete }: { zap: Zap; onDelete: (id: string) => Promise<void> }) {
+function ZapCard({ zap, onDelete, onToggle }: {
+    zap: Zap;
+    onDelete: (id: string) => Promise<void>;
+    onToggle: (id: string, current: boolean) => Promise<void>;
+}) {
     const router = useRouter();
     const [copied, setCopied] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
-    // Rename state
     const [isRenaming, setIsRenaming] = useState(false);
     const [renameValue, setRenameValue] = useState(zap.name || "");
     const [renaming, setRenaming] = useState(false);
+    const [toggling, setToggling] = useState(false);
     const renameInputRef = useRef<HTMLInputElement>(null);
-    const webhookUrl = `${HOOKS_URL}/hooks/catch/1/${zap.id}`;
+    const webhookUrl = `${HOOKS_URL}/hooks/catch/${zap.userId}/${zap.id}`;
     const defaultName = "Untitled Zap";
 
     const copyToClipboard = (e: React.MouseEvent) => {
@@ -711,14 +739,22 @@ function ZapCard({ zap, onDelete }: { zap: Zap; onDelete: (id: string) => Promis
         if (!trimmed || trimmed === zap.name) { setIsRenaming(false); return; }
         setRenaming(true);
         try {
-            const token = localStorage.getItem("token");
-            await axios.patch(`${BACKEND_URL}/api/v1/zap/${zap.id}`, { name: trimmed }, {
-                headers: { authorization: token }
-            });
+            await api.patch(API_ROUTES.ZAP.UPDATE(zap.id), { name: trimmed });
             zap.name = trimmed; // optimistic local update
         } catch { /* silently revert */ }
         setRenaming(false);
         setIsRenaming(false);
+    };
+
+    const handleToggleClick = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (toggling || deleting) return;
+        setToggling(true);
+        try {
+            await onToggle(zap.id, zap.isEnabled);
+        } finally {
+            setToggling(false);
+        }
     };
 
     const handleRenameKey = (e: React.KeyboardEvent) => {
@@ -817,6 +853,22 @@ function ZapCard({ zap, onDelete }: { zap: Zap; onDelete: (id: string) => Promis
                             Created on {formatDate(zap.createdAt)}
                         </p>
                     </div>
+                    {/* Enable/Disable toggle */}
+                    <button
+                        onClick={handleToggleClick}
+                        disabled={toggling || deleting}
+                        title={zap.isEnabled ? "Disable Zap" : "Enable Zap"}
+                        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-primary-500 disabled:opacity-50 ${zap.isEnabled
+                            ? "bg-primary-600"
+                            : "bg-slate-300 dark:bg-slate-600"
+                            }`}
+                        aria-label={zap.isEnabled ? "Disable" : "Enable"}
+                    >
+                        <span
+                            className={`inline-block h-3.5 w-3.5 mt-0.75 ml-0.5 mt-[3px] rounded-full bg-white shadow transform transition-transform duration-200 ${zap.isEnabled ? "translate-x-4" : "translate-x-0"
+                                }`}
+                        />
+                    </button>
                     {/* Delete button */}
                     <button
                         onClick={e => { e.stopPropagation(); if (!deleting) setShowDeleteModal(true); }}
@@ -875,6 +927,7 @@ function ZapCard({ zap, onDelete }: { zap: Zap; onDelete: (id: string) => Promis
                     <Button
                         variant="ghost"
                         size="sm"
+                        onClick={(e) => { e.stopPropagation(); router.push(`/zap/${zap.id}`); }}
                         className="shrink-0 text-primary-600 hover:text-primary-700 hover:bg-primary-50 dark:hover:bg-primary-900/20"
                     >
                         Open
@@ -923,3 +976,6 @@ function EmptyState({ onCreateZap }: { onCreateZap: () => void }) {
         </div>
     );
 }
+
+// Protected export — users without a token are redirected to /signin
+export default withAuth(DashboardPage);

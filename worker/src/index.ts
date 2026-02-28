@@ -1,29 +1,24 @@
 import { Kafka } from "kafkajs";
 import { PrismaClient } from "@prisma/client";
-import { sendEmail } from "./utils/email";
-import { setDefaultHighWaterMark } from "nodemailer/lib/xoauth2";
-import { appendRow } from "./utils/google_sheet";
-import { createCalendarEvent } from "./utils/google_calender";
-import { appendNotionRow } from "./utils/notion";
-import { generateGeminiContent } from "./utils/gemini";
-import { sendSlackMessage } from "./utils/slack";
-import { sendDiscordMessage } from "./utils/discord";
+import { ActionRegistry } from "./registry";
 require('dotenv').config();
-const TOPIC_NAME = "zap-events"
+
+const TOPIC_NAME = "zap-events";
+const KAFKA_BROKERS = (process.env.KAFKA_BROKERS || "localhost:9092").split(",");
+
+// ─── Retry configuration ───────────────────────────────────────────────────
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 1000; // 1s, 2s, 4s (exponential backoff)
+
 const prismaClient = new PrismaClient();
 const kafka = new Kafka({
     clientId: 'outbox-processor',
-    brokers: ['localhost:9092']
+    brokers: KAFKA_BROKERS
 });
 
 /**
- * Resolves template strings and values using actual payload data
- * Replaces {{dot.path}} placeholders with actual values from payload
- * Safe: returns empty string if field doesn't exist, never throws
- * 
- * @example
- * resolveTemplate("Hello {{user.name}}", { user: { name: "John" } })
- * // Returns: "Hello John"
+ * Resolves template strings using actual payload data.
+ * Replaces {{dot.path}} placeholders with values from payload.
  */
 function resolveTemplate(str: string, payload: any): string {
     if (!str || typeof str !== "string") return str;
@@ -42,22 +37,11 @@ function resolveTemplate(str: string, payload: any): string {
 }
 
 /**
- * Recursively resolves all template strings in an object
- * Processes nested objects and arrays
- * 
- * @param obj - Object with potential template strings
- * @param payload - Data to resolve templates against
- * @returns Object with all templates resolved
+ * Recursively resolves all template strings in an object.
  */
 function resolveTemplatesInObject(obj: any, payload: any): any {
-    if (typeof obj === "string") {
-        return resolveTemplate(obj, payload);
-    }
-
-    if (Array.isArray(obj)) {
-        return obj.map((item) => resolveTemplatesInObject(item, payload));
-    }
-
+    if (typeof obj === "string") return resolveTemplate(obj, payload);
+    if (Array.isArray(obj)) return obj.map(item => resolveTemplatesInObject(item, payload));
     if (obj !== null && typeof obj === "object") {
         const resolved: any = {};
         for (const key in obj) {
@@ -67,79 +51,135 @@ function resolveTemplatesInObject(obj: any, payload: any): any {
         }
         return resolved;
     }
-
     return obj;
 }
 
 /**
- * Merges actual webhook payload with previous action results
- * Used as context for template resolution
- * 
- * @param zapRunPayload - Original webhook payload
- * @param zapRunMetadata - Accumulated results from previous actions
- * @returns Combined context object
+ * Merges webhook payload with previous action results for template resolution.
  */
 function buildExecutionContext(zapRunPayload: any, zapRunMetadata: any): any {
     return {
-        // Original trigger payload at root level for easy access
         ...zapRunPayload,
-        // Previous action results under "action_N" keys
         ...(zapRunMetadata || {})
     };
 }
+
+/**
+ * Sleeps for ms milliseconds.
+ */
+function sleep(ms: number): Promise<void> {
+    return new Promise(r => setTimeout(r, ms));
+}
+
+/**
+ * Executes a single action with exponential-backoff retry.
+ * Throws after MAX_RETRIES if all attempts fail.
+ */
+async function executeActionWithRetry(
+    actionTypeName: string,
+    actionTypeId: string,
+    resolvedMetadata: any,
+    zapRunId: string,
+    stage: number,
+    userId: string
+): Promise<any> {
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const plugin = ActionRegistry.get(actionTypeId);
+            if (!plugin) {
+                console.log(`⚠️  Unknown action type: "${actionTypeId}" — skipping`);
+                return null;
+            }
+
+            // Execute the loosely-coupled plugin logic
+            const result = await plugin.execute(resolvedMetadata, userId);
+
+            // Track retry count on success if this wasn't the first attempt
+            if (attempt > 1) {
+                await prismaClient.zapRun.update({
+                    where: { id: zapRunId },
+                    data: { retryCount: attempt - 1 }
+                });
+                console.log(`✅ Action "${actionTypeId}" succeeded on attempt ${attempt}`);
+            }
+            return result; // Success — exit retry loop
+        } catch (err) {
+            lastError = err;
+            const backoff = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+            console.warn(
+                `⚠️  Action "${actionTypeId}" failed on attempt ${attempt}/${MAX_RETRIES}. ` +
+                `Retrying in ${backoff}ms...`,
+                err
+            );
+            if (attempt < MAX_RETRIES) {
+                await sleep(backoff);
+            }
+        }
+    }
+
+    // All retries exhausted
+    throw lastError;
+}
+
+// Deleted giant executeAction switch block as it's now handled smoothly via ActionRegistry
 
 async function main() {
     const producer = kafka.producer();
     await producer.connect();
     const consumer = kafka.consumer({ groupId: 'main-worker' });
     await consumer.connect();
-    console.log("✅ Worker started - listening for zap events");
+    console.log("✅ Worker started — listening for zap events");
 
     await consumer.subscribe({ topic: TOPIC_NAME, fromBeginning: true });
     await consumer.run({
         autoCommit: false,
         eachMessage: async ({ topic, partition, message }) => {
             try {
-                console.log({
-                    partition,
-                    offset: message.offset,
-                    value: message.value?.toString(),
-                });
+                if (!message.value?.toString()) return;
 
-                if (!message.value?.toString()) {
-                    return;
-                }
-
-                const parsedValue = JSON.parse(message.value?.toString());
+                const parsedValue = JSON.parse(message.value.toString());
                 const zapRunId = parsedValue.zapRunId;
                 const stage = parsedValue.stage;
 
+                console.log(`📨 Processing zapRunId=${zapRunId} stage=${stage}`);
+
                 const zapRunDetails = await prismaClient.zapRun.findFirst({
-                    where: {
-                        id: zapRunId
-                    },
+                    where: { id: zapRunId },
                     include: {
                         zap: {
                             include: {
-                                actions: {
-                                    include: {
-                                        type: true
-                                    }
-                                }
+                                actions: { include: { type: true } }
                             }
                         }
                     }
                 });
 
                 if (!zapRunDetails) {
-                    console.error("Zap run not found:", zapRunId);
+                    console.error("❌ Zap run not found:", zapRunId);
                     return;
                 }
 
-                const currentAction = zapRunDetails.zap.actions.find((x: any) => x.sortingOrder === stage);
+                // ── Skip disabled zaps ────────────────────────────────────
+                if (!zapRunDetails.zap.isEnabled) {
+                    console.log(`⏭️  Zap is disabled — skipping zapRunId: ${zapRunId}`);
+                    await prismaClient.zapRun.update({
+                        where: { id: zapRunId },
+                        data: { status: 'failed' }
+                    });
+                    await consumer.commitOffsets([{
+                        topic: TOPIC_NAME,
+                        partition,
+                        offset: (parseInt(message.offset) + 1).toString()
+                    }]);
+                    return;
+                }
+
+                const currentAction = zapRunDetails.zap.actions.find(x => x.sortingOrder === stage);
 
                 if (!currentAction) {
-                    console.log("🛑 Current action not found for stage:", stage);
+                    console.log("🛑 No action found for stage:", stage);
                     return;
                 }
 
@@ -151,7 +191,6 @@ async function main() {
                     });
                 }
 
-                // Get actual webhook payload (or fallback to metadata for compatibility)
                 const webhookPayload = typeof zapRunDetails.payload === "string"
                     ? JSON.parse(zapRunDetails.payload)
                     : (zapRunDetails.payload || {});
@@ -160,138 +199,85 @@ async function main() {
                     ? JSON.parse(zapRunDetails.metadata)
                     : (zapRunDetails.metadata || {});
 
-                // Build execution context: combine webhook payload + previous action results
                 const executionContext = buildExecutionContext(webhookPayload, zapRunMetadata);
-
-                // Deep resolve all templates in action metadata using actual payload
                 const resolvedMetadata = resolveTemplatesInObject(currentAction.metadata, executionContext);
+                const userId = zapRunDetails.zap.userId.toString();
 
-                console.log(`📋 Action ${stage}: ${currentAction.type.name}`, {
-                    original: currentAction.metadata,
+                console.log(`📋 Stage ${stage}: ${currentAction.type.name}`, {
                     resolved: resolvedMetadata
                 });
 
-                // Execute based on action type
-                if (currentAction.type.id === "Slack") {
-                    const { webhookUrl, message } = resolvedMetadata;
-                    console.log("💬 Sending Slack message");
-                    await sendSlackMessage(webhookUrl as string, message as string);
-                }
+                // ── Execute with retry through standard Plugin interface ──
+                const output = await executeActionWithRetry(
+                    currentAction.type.name,
+                    currentAction.type.id,
+                    resolvedMetadata,
+                    zapRunId,
+                    stage,
+                    userId
+                );
 
-                if (currentAction.type.id === "Discord") {
-                    const { webhookUrl, content } = resolvedMetadata;
-                    console.log("🎮 Sending Discord message");
-                    await sendDiscordMessage(webhookUrl as string, content as string);
-                }
-
-                if (currentAction.type.id === "email") {
-                    console.log("📧 Sending email");
-                    const { email, subject, body } = resolvedMetadata;
-                    await sendEmail({
-                        email: email as string,
-                        body: body as string,
-                        subject: subject as string
-                    } as any);
-                }
-
-                if (currentAction.type.id === "Google Sheet") {
-                    console.log("📊 Appending to Google Sheet");
-                    await appendRow(zapRunDetails.zap.userId.toString() || "", resolvedMetadata);
-                }
-
-                if (currentAction.type.id === "Google_Calendar") {
-                    console.log("📅 Creating Google Calendar event");
-                    await createCalendarEvent(
-                        zapRunDetails.zap.userId.toString() || "",
-                        resolvedMetadata as {
-                            title: string;
-                            location: string;
-                            description: string;
-                            start: string;
-                            end: string;
-                        }
-                    );
-                }
-
-                if (currentAction.type.id === "Notion") {
-                    console.log("📝 Creating Notion Page");
-                    await appendNotionRow(
-                        zapRunDetails.zap.userId.toString() || "",
-                        resolvedMetadata
-                    );
-                }
-
-                if (currentAction.type.id === "Gemini") {
-                    console.log("🤖 Asking Gemini...");
-                    const prompt = resolvedMetadata.prompt;
-                    const result = await generateGeminiContent(prompt);
-                    console.log("✨ Gemini Output:", result);
-
-                    const output = result || "";
+                // If plugin returned data (like Gemini text output), implicitly store it in metadata
+                if (output) {
                     const stageKey = `action_${currentAction.sortingOrder}`;
-                    const newMetadata = {
-                        ...zapRunMetadata,
-                        [stageKey]: { output }
-                    };
-
                     await prismaClient.zapRun.update({
                         where: { id: zapRunId },
-                        data: { metadata: newMetadata }
+                        data: { metadata: { ...zapRunMetadata, [stageKey]: { output } } }
                     });
                 }
 
                 // Small delay to prevent thundering herd
-                await new Promise(r => setTimeout(r, 100));
+                await sleep(100);
 
                 const lastStage = (zapRunDetails.zap.actions?.length || 1) - 1;
 
-                // Queue next action if not the last one
-                if (lastStage !== stage) {
+                if (stage < lastStage) {
                     console.log(`⏭️  Queueing next stage: ${stage + 1}`);
                     await producer.send({
                         topic: TOPIC_NAME,
-                        messages: [{
-                            value: JSON.stringify({
-                                stage: stage + 1,
-                                zapRunId
-                            })
-                        }]
+                        messages: [{ value: JSON.stringify({ stage: stage + 1, zapRunId }) }]
                     });
                 } else {
-                    console.log(`✅ Zap execution completed for zapRunId: ${zapRunId}`);
+                    console.log(`✅ Zap run completed: ${zapRunId}`);
                     await prismaClient.zapRun.update({
                         where: { id: zapRunId },
                         data: { status: 'completed' }
                     });
                 }
 
-                // Commit offset
                 await consumer.commitOffsets([{
                     topic: TOPIC_NAME,
-                    partition: partition,
+                    partition,
                     offset: (parseInt(message.offset) + 1).toString()
                 }]);
 
             } catch (error) {
-                console.error("❌ Error processing message:", error);
-                // Mark run as failed
+                console.error("❌ Fatal error processing message:", error);
                 try {
                     const parsedValue = message.value ? JSON.parse(message.value.toString()) : null;
                     if (parsedValue?.zapRunId) {
+                        const currentRetry = await prismaClient.zapRun.findFirst({
+                            where: { id: parsedValue.zapRunId },
+                            select: { retryCount: true }
+                        });
                         await prismaClient.zapRun.update({
                             where: { id: parsedValue.zapRunId },
-                            data: { status: 'failed' }
+                            data: {
+                                status: 'failed',
+                                retryCount: (currentRetry?.retryCount ?? 0) + MAX_RETRIES
+                            }
                         });
                     }
                 } catch { /* ignore secondary error */ }
-                // Commit offset even on error to avoid stuck messages
+                // Commit to avoid infinite re-processing of poison pill messages
                 await consumer.commitOffsets([{
                     topic: TOPIC_NAME,
-                    partition: partition,
+                    partition,
                     offset: (parseInt(message.offset) + 1).toString()
                 }]);
             }
         }
     });
 }
-main()
+
+main();

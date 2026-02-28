@@ -2,43 +2,41 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { FcGoogle } from "react-icons/fc";
-import { FaFacebook, FaGithub } from "react-icons/fa";
-import { BACKEND_URL } from "@/app/config";
-import axios from "axios";
+import { FaGithub } from "react-icons/fa";
+import { api } from "@/lib/api-client";
+import { API_ROUTES, STORAGE_KEYS } from "@/lib/constants";
 import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
 import Link from "next/link";
-
-type LoginResponse = {
-  token: string;
-};
+import { useToast } from "@/contexts/ToastContext";
+import { useAuth } from "@/contexts/AuthContext";
 
 export function LoginCard() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
+  const { signin } = useAuth();
+  const { success, error } = useToast();
 
   const isValidEmail = (email: string) =>
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
   const handleContinue = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!isValidEmail(email)) return;
+    if (!isValidEmail(email)) {
+      error("Please enter a valid email address.");
+      return;
+    }
     setLoading(true);
     try {
-      const res = await axios.post<LoginResponse>(
-        `${BACKEND_URL}/api/v1/user/signin`,
-        {
-          username: email,
-          password,
-        }
-      );
-      localStorage.setItem("token", res.data.token);
-      router.push("/dashboard");
+      await signin({
+        username: email,
+        password,
+      });
+      success("Welcome back!");
     } catch (e: any) {
-      console.error(e);
-      alert(e.response?.data?.message || "Login failed"); // Better error handling would be a toast
+      const msg = e?.response?.data?.message || e?.message || "Login failed";
+      error(msg);
     } finally {
       setLoading(false);
     }
@@ -62,13 +60,6 @@ export function LoginCard() {
           leftIcon={<FcGoogle size={20} />}
         >
           Continue with Google
-        </Button>
-        <Button
-          variant="outline"
-          className="w-full justify-start pl-4"
-          leftIcon={<FaFacebook size={20} className="text-blue-600" />}
-        >
-          Continue with Facebook
         </Button>
         <Button
           variant="outline"
@@ -110,13 +101,15 @@ export function LoginCard() {
             onChange={(e) => setPassword(e.target.value)}
           />
           <div className="flex justify-end mt-1">
-            <button type="button" className="text-xs text-primary-600 hover:text-primary-700 font-medium">Forgot password?</button>
+            <button type="button" className="text-xs text-primary-600 hover:text-primary-700 font-medium">
+              Forgot password?
+            </button>
           </div>
         </div>
 
         <Button
           type="submit"
-          disabled={!isValidEmail(email)}
+          disabled={!isValidEmail(email) || loading}
           isLoading={loading}
           className="w-full mt-2"
           size="lg"
@@ -126,7 +119,7 @@ export function LoginCard() {
       </form>
 
       <p className="text-center text-xs mt-4 text-slate-600 dark:text-slate-400">
-        Don't have an account?{" "}
+        Don&apos;t have an account?{" "}
         <Link
           href="/signup"
           className="text-primary-600 font-semibold hover:underline"

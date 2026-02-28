@@ -16,6 +16,16 @@ async function main() {
     }
   });
 
+  await prisma.availableTriggers.upsert({
+    where: { id: "Gmail" },
+    update: {},
+    create: {
+      id: "Gmail",
+      name: "Gmail",
+      image: "https://upload.wikimedia.org/wikipedia/commons/7/7e/Gmail_icon_%282020%29.svg"
+    }
+  });
+
   // ===============================
   // Actions
   // ===============================
@@ -86,7 +96,17 @@ async function main() {
     create: {
       id: "Discord",
       name: "Discord",
-      image: "https://assets-global.website-files.com/6257adef93867e56f84d3092/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png"
+      image: "https://static.vecteezy.com/system/resources/previews/006/892/625/non_2x/discord-logo-icon-editorial-free-vector.jpg"
+    }
+  });
+
+  await prisma.availableAction.upsert({
+    where: { id: "Google Drive" },
+    update: {},
+    create: {
+      id: "Google Drive",
+      name: "Google Drive",
+      image: "https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg"
     }
   });
 }

@@ -138,7 +138,7 @@ function main() {
                             create: {
                                 id: "Discord",
                                 name: "Discord",
-                                image: "https://assets-global.website-files.com/6257adef93867e56f84d3092/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png"
+                                image: "https://static.vecteezy.com/system/resources/previews/006/892/625/non_2x/discord-logo-icon-editorial-free-vector.jpg"
                             }
                         })];
                 case 8:

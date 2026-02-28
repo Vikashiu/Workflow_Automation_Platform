@@ -41,11 +41,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 var express_1 = __importDefault(require("express"));
 var client_1 = require("@prisma/client");
+var cors_1 = __importDefault(require("cors"));
 var app = (0, express_1.default)();
+app.use((0, cors_1.default)()); // Allow webhooks to be pinged via browser/fetch universally
 app.use(express_1.default.json()); // Middleware to parse JSON body
+app.use(express_1.default.urlencoded({ extended: true }));
 var client = new client_1.PrismaClient();
-console.log("hi there");
-app.post("/hooks/catch/:userId/:zapId", function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
+console.log("Listening for webhooks...");
+// Accept GET, POST, or any method
+app.all("/hooks/catch/:userId/:zapId", function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
     var userId, zapId, body, zap;
     return __generator(this, function (_a) {
         switch (_a.label) {
@@ -53,6 +57,9 @@ app.post("/hooks/catch/:userId/:zapId", function (req, res) { return __awaiter(v
                 userId = req.params.userId;
                 zapId = req.params.zapId;
                 body = req.body;
+                if (Object.keys(body).length === 0 && Object.keys(req.query).length > 0) {
+                    body = req.query;
+                }
                 return [4 /*yield*/, client.zap.findFirst({
                         where: {
                             id: zapId,
@@ -65,6 +72,16 @@ app.post("/hooks/catch/:userId/:zapId", function (req, res) { return __awaiter(v
                     res.status(404).json({ message: "Zap not found or unauthorized" });
                     return [2 /*return*/];
                 }
+                // Save the very latest payload onto the Trigger table as a sample so the Editor can map fields real-time
+                return [4 /*yield*/, client.trigger.update({
+                        where: { zapId: zapId },
+                        data: {
+                            samplePayload: body
+                        }
+                    })];
+            case 2:
+                // Save the very latest payload onto the Trigger table as a sample so the Editor can map fields real-time
+                _a.sent();
                 // Store in db a new run
                 return [4 /*yield*/, client.$transaction(function (tx) { return __awaiter(void 0, void 0, void 0, function () {
                         var run;
@@ -92,7 +109,7 @@ app.post("/hooks/catch/:userId/:zapId", function (req, res) { return __awaiter(v
                             }
                         });
                     }); })];
-            case 2:
+            case 3:
                 // Store in db a new run
                 _a.sent();
                 res.json({

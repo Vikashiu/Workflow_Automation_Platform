@@ -4,8 +4,8 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
-import axios from "axios";
-import { BACKEND_URL } from "@/app/config";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/contexts/ToastContext";
 
 // Svg icons for checklist
 const CheckIcon = () => (
@@ -58,23 +58,21 @@ function SignupForm() {
     name: "",
   });
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
+  const { signup } = useAuth();
+  const { error } = useToast();
 
   const handleSignup = async () => {
     if (!form.email || !form.password || !form.name) return;
     setLoading(true);
     try {
-      const res = await axios.post<{ token: string }>(`${BACKEND_URL}/api/v1/user/signup`, {
+      await signup({
         username: form.email,
         password: form.password,
         name: form.name
       });
-      // Auto-login after signup
-      localStorage.setItem("token", res.data.token);
-      router.push('/dashboard');
-    } catch (error: any) {
-      console.error(error);
-      alert(error.response?.data?.message || "Signup failed. Please try again.");
+    } catch (e: any) {
+      console.error(e);
+      error(e?.response?.data?.message || e?.message || "Signup failed. Please try again.");
     } finally {
       setLoading(false);
     }
