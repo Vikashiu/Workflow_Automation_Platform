@@ -13,7 +13,7 @@ const oauth2Client = new google.auth.OAuth2(
   process.env.REDIRECT_URI
 );
 
-app.get("/" ,async (req, res) => {
+app.get("/", async (req, res) => {
   // const { code } = req.query;
   // const userId = "";
   const { code, state } = req.query;
@@ -44,10 +44,10 @@ app.get("/" ,async (req, res) => {
     console.log("✅ Credentials saved for user:", userId);
     res.redirect(`${process.env.REDIRECT_URI_TO_FRONTEND}/editor`);
     // res.send("OAuth complete. Webhook registered. Check console.");
-    } catch (error) {
-      console.log("❌ Error in OAuth callback:", error);
-      res.status(500).send("Authentication failed.");
-    }
+  } catch (error) {
+    console.log("❌ Error in OAuth callback:", error);
+    res.status(500).send("Authentication failed.");
+  }
 });
 
 export const oauth2callbackRouter = app;

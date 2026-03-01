@@ -143,7 +143,7 @@ async function getGoogleSheets(userId: string) {
 // Route 1: Get all spreadsheets
 app.get('/sheets', authMiddleware, async (req, res) => {
     // @ts-ignore
-    const userId = req.id.toString();
+    const userId = req.id;
 
     try {
         const sheets = await getGoogleSheets(userId);
