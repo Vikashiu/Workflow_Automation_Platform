@@ -157,7 +157,7 @@ app.get('/sheets', authMiddleware, async (req, res) => {
 // Route 2: Get all worksheets for a given spreadsheet
 app.get("/sheets/:spreadsheetId/worksheets", authMiddleware, async (req, res) => {
     // @ts-ignore
-    const userId = req.id.toString();
+    const userId = req.id;
     const { spreadsheetId } = req.params;
 
     try {
@@ -172,7 +172,7 @@ app.get("/sheets/:spreadsheetId/worksheets", authMiddleware, async (req, res) =>
 // Route 3: Get all columns for a given worksheet
 app.get("/sheets/:spreadsheetId/worksheets/:sheetName/columns", authMiddleware, async (req, res) => {
     // @ts-ignore
-    const userId = req.id.toString();
+    const userId = req.id;
     const { spreadsheetId, sheetName } = req.params;
 
     try {
@@ -192,7 +192,7 @@ app.get("/sheets/:spreadsheetId/worksheets/:sheetName/columns", authMiddleware, 
  */
 app.get("/drive/folders", authMiddleware, async (req, res) => {
     // @ts-ignore
-    const userId = req.id.toString();
+    const userId = req.id;
 
     try {
         const auth = await getAuthenticatedClient(userId);
