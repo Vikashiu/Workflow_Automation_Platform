@@ -66,7 +66,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     if (response.user) {
                         setUser(response.user);
                     }
-                    router.push(ROUTES.DASHBOARD);
+                    router.replace(ROUTES.DASHBOARD);
+                    router.refresh();
                 }
             } catch (error) {
                 console.error("Sign in failed:", error);

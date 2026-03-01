@@ -2,7 +2,8 @@
 import { Router } from "express";
 import { authMiddleware } from "../authMiddleware";
 // Assuming the functions from the 'google-sheets-api-expansion' artifact are in this path
-
+import dotenv from "dotenv";
+dotenv.config();
 import { google } from "googleapis";
 import { PrismaClient } from "@prisma/client";
 
@@ -16,7 +17,7 @@ async function getAuthenticatedClient(userId: string) {
     const creds = await prismaClient.googleCredentials.findFirst({ where: { userId } });
 
     if (!creds || !creds.accessToken || !creds.refreshToken) {
-        throw new Error(`No valid Google credentials found for user ID: ${userId}.`);
+        throw new Error(`No valid Google credentials found for user ID: ${userId}. Please reconnect Google from the dashboard.`);
     }
 
     const oauth2Client = new google.auth.OAuth2(
@@ -25,17 +26,24 @@ async function getAuthenticatedClient(userId: string) {
         process.env.REDIRECT_URI
     );
 
+    // Pass expiry_date so the library ONLY refreshes when the token is actually expired.
+    // Without this, it treats every token as expired and hits the refresh endpoint on
+    // every request — causing `invalid_client` errors even with a valid access token.
     oauth2Client.setCredentials({
         access_token: creds.accessToken,
         refresh_token: creds.refreshToken,
+        expiry_date: creds.expiryDate ? creds.expiryDate.getTime() : undefined,
     });
 
     oauth2Client.on('tokens', async (tokens) => {
         if (tokens.access_token) {
-            console.log('Access token was refreshed.');
+            console.log('Access token was refreshed for user:', userId);
             await prismaClient.googleCredentials.update({
-                where: { userId: userId },
-                data: { accessToken: tokens.access_token },
+                where: { userId },
+                data: {
+                    accessToken: tokens.access_token,
+                    expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
+                },
             });
         }
     });
@@ -93,34 +101,9 @@ export async function getSheetColumns(userId: string, spreadsheetId: string, she
 }
 
 async function getGoogleSheets(userId: string) {
-    const creds = await prismaClient.googleCredentials.findFirst({ where: { userId } });
-
-    if (!creds || !creds.accessToken || !creds.refreshToken) {
-        throw new Error(`No valid Google credentials found for user ID: ${userId}.`);
-    }
-
-    const oauth2Client = new google.auth.OAuth2(
-        process.env.CLIENT_ID,
-        process.env.CLIENT_SECRET,
-        process.env.REDIRECT_URI
-    );
-
-    oauth2Client.setCredentials({
-        access_token: creds.accessToken,
-        refresh_token: creds.refreshToken,
-    });
-
-    oauth2Client.on('tokens', async (tokens) => {
-        if (tokens.access_token) {
-            console.log('Access token was refreshed for fetching sheets.');
-            await prismaClient.googleCredentials.update({
-                where: { userId: userId },
-                data: { accessToken: tokens.access_token },
-            });
-        }
-    });
-
-    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    // Reuse the shared authenticated client (which correctly sets expiry_date)
+    const auth = await getAuthenticatedClient(userId);
+    const drive = google.drive({ version: 'v3', auth });
 
     const response = await drive.files.list({
         q: "mimeType='application/vnd.google-apps.spreadsheet'",
@@ -143,7 +126,7 @@ async function getGoogleSheets(userId: string) {
 // Route 1: Get all spreadsheets
 app.get('/sheets', authMiddleware, async (req, res) => {
     // @ts-ignore
-    const userId = req.id;
+    const userId = String(req.id); // convert number → string to match DB storage
 
     try {
         const sheets = await getGoogleSheets(userId);
@@ -157,7 +140,7 @@ app.get('/sheets', authMiddleware, async (req, res) => {
 // Route 2: Get all worksheets for a given spreadsheet
 app.get("/sheets/:spreadsheetId/worksheets", authMiddleware, async (req, res) => {
     // @ts-ignore
-    const userId = req.id;
+    const userId = String(req.id); // convert number → string to match DB storage
     const { spreadsheetId } = req.params;
 
     try {
@@ -172,7 +155,7 @@ app.get("/sheets/:spreadsheetId/worksheets", authMiddleware, async (req, res) =>
 // Route 3: Get all columns for a given worksheet
 app.get("/sheets/:spreadsheetId/worksheets/:sheetName/columns", authMiddleware, async (req, res) => {
     // @ts-ignore
-    const userId = req.id;
+    const userId = String(req.id); // convert number → string to match DB storage
     const { spreadsheetId, sheetName } = req.params;
 
     try {
@@ -192,7 +175,7 @@ app.get("/sheets/:spreadsheetId/worksheets/:sheetName/columns", authMiddleware, 
  */
 app.get("/drive/folders", authMiddleware, async (req, res) => {
     // @ts-ignore
-    const userId = req.id;
+    const userId = String(req.id); // convert number → string to match DB storage
 
     try {
         const auth = await getAuthenticatedClient(userId);
