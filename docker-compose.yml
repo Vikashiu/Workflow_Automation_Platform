@@ -1,0 +1,46 @@
+
+
+services:
+  # 1. The Message Broker (Kafka & Zookeeper)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  # 2. Your Microservices
+  hooks-server:
+    build: ./hooks
+    ports:
+      - "3002:3002" 
+    environment:
+      - DATABASE_URL=${DATABASE_URL} 
+      - KAFKA_BROKERS=kafka:9092
+    depends_on:
+      - kafka
+
+  processor:
+    build: ./processor
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - KAFKA_BROKERS=kafka:9092
+    depends_on:
+      - kafka
+
+  worker:
+    build: ./worker
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - KAFKA_BROKERS=kafka:9092
+    depends_on:
+      - kafka
