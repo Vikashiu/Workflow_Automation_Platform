@@ -40,7 +40,7 @@ userRouter.post('/signup', async (req, res) => {
 
     const token = jwt.sign({ id: user.id }, JWT_PASSWORD, { expiresIn: "7d" });
 
-    res.json({ token });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
 });
 
 // POST /api/v1/user/signin
@@ -72,7 +72,7 @@ userRouter.post('/signin', async (req, res) => {
 
     const token = jwt.sign({ id: user.id }, JWT_PASSWORD, { expiresIn: "7d" });
 
-    res.json({ token });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
 });
 
 // GET /api/v1/user — get current user profile
