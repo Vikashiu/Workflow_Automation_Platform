@@ -29,33 +29,11 @@ const createApiClient = () => {
         (error) => Promise.reject(error)
     );
 
-    // Response interceptor - Handle errors globally
+    // Response interceptor - pass errors through so AuthContext / withAuth
+    // can handle 401/403 gracefully without a hard page redirect.
     instance.interceptors.response.use(
         (response) => response,
         (error) => {
-            // Check if error has response property (axios error)
-            if (error?.response) {
-                // Handle specific status codes
-                switch (error.response.status) {
-                    case 401:
-                        // Unauthorized - redirect to login
-                        if (typeof window !== "undefined") {
-                            localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
-                            window.location.href = "/signin";
-                        }
-                        break;
-                    case 403:
-                        console.error("Forbidden - insufficient permissions");
-                        break;
-                    case 404:
-                        console.error("Resource not found");
-                        break;
-                    case 500:
-                        console.error("Server error");
-                        break;
-                }
-            }
-
             return Promise.reject(error);
         }
     );
@@ -76,17 +54,10 @@ export async function apiRequest<T>(
         const response = await apiClient.request<T>(config as any);
         return response.data;
     } catch (error) {
-        // Check if it's an axios error
-        if (error && typeof error === "object" && "response" in error) {
-            const axiosError = error as { response?: { data?: ApiError } };
-            throw new Error(
-                axiosError.response?.data?.message || "An error occurred"
-            );
-        }
-        if (error instanceof Error) {
-            throw error;
-        }
-        throw new Error("An unknown error occurred");
+        // Re-throw the original error (preserving error.response.status etc.)
+        // so that callers like AuthContext and withAuth can inspect the raw
+        // axios error shape, e.g. e?.response?.status === 401.
+        throw error;
     }
 }
 
